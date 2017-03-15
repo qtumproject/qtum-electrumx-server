@@ -30,6 +30,7 @@ Anything coin-specific should go in this file and be subclassed where
 necessary for appropriate handling.
 '''
 
+from collections import namedtuple
 import re
 import struct
 from decimal import Decimal
@@ -38,7 +39,9 @@ from hashlib import sha256
 import lib.util as util
 from lib.hash import Base58, hash160, double_sha256, hash_to_str
 from lib.script import ScriptPubKey
-from lib.tx import Deserializer, DeserializerSegWit
+from lib.tx import Deserializer, DeserializerSegWit, DeserializerAuxPow, DeserializerZcash
+
+Block = namedtuple("Block", "header transactions")
 
 
 class CoinError(Exception):
@@ -53,6 +56,8 @@ class Coin(object):
     RPC_URL_REGEX = re.compile('.+@(\[[0-9a-fA-F:]+\]|[^:]+)(:[0-9]+)?')
     VALUE_PER_COIN = 100000000
     CHUNK_SIZE = 2016
+    BASIC_HEADER_SIZE = 80
+    STATIC_BLOCK_HEADERS = True
     IRC_PREFIX = None
     IRC_SERVER = "irc.freenode.net"
     IRC_PORT = 6667
@@ -232,29 +237,33 @@ class Coin(object):
         return header[4:36]
 
     @classmethod
-    def header_offset(cls, height):
+    def static_header_offset(cls, height):
         '''Given a header height return its offset in the headers file.
 
         If header sizes change at some point, this is the only code
         that needs updating.'''
-        return height * 80
+        assert cls.STATIC_BLOCK_HEADERS
+        return height * cls.BASIC_HEADER_SIZE
 
     @classmethod
-    def header_len(cls, height):
+    def static_header_len(cls, height):
         '''Given a header height return its length.'''
-        return cls.header_offset(height + 1) - cls.header_offset(height)
+        return cls.static_header_offset(height + 1) \
+               - cls.static_header_offset(height)
 
     @classmethod
     def block_header(cls, block, height):
         '''Returns the block header given a block and its height.'''
-        return block[:cls.header_len(height)]
+        return block[:cls.static_header_len(height)]
 
     @classmethod
-    def block_txs(cls, block, height):
-        '''Returns a list of (deserialized_tx, tx_hash) pairs given a
+    def block_full(cls, block, height):
+        '''Returns (header, [(deserialized_tx, tx_hash), ...]) given a
         block and its height.'''
+        header = cls.block_header(block, height)
         deserializer = cls.deserializer()
-        return deserializer(block[cls.header_len(height):]).read_block()
+        txs = deserializer(block[len(header):]).read_tx_block()
+        return Block(header, txs)
 
     @classmethod
     def decimal_value(cls, value):
@@ -283,6 +292,23 @@ class Coin(object):
     @classmethod
     def deserializer(cls):
         return Deserializer
+
+class CoinAuxPow(Coin):
+    # Set NAME and NET to avoid exception in Coin::lookup_coin_class
+    NAME = ""
+    NET = ""
+    STATIC_BLOCK_HEADERS = False
+
+    @classmethod
+    def header_hash(cls, header):
+        '''Given a header return hash'''
+        return double_sha256(header[:cls.BASIC_HEADER_SIZE])
+
+    @classmethod
+    def block_header(cls, block, height):
+        '''Return the AuxPow block header bytes'''
+        block = DeserializerAuxPow(block)
+        return block.read_header(height, cls.BASIC_HEADER_SIZE)
 
 
 class Bitcoin(Coin):
@@ -414,7 +440,7 @@ class LitecoinTestnet(Litecoin):
 
 
 # Source: namecoin.org
-class Namecoin(Coin):
+class Namecoin(CoinAuxPow):
     NAME = "Namecoin"
     SHORTNAME = "NMC"
     NET = "mainnet"
@@ -447,7 +473,7 @@ class NamecoinTestnet(Namecoin):
 
 # For DOGE there is disagreement across sites like bip32.org and
 # pycoin.  Taken from bip32.org and bitmerchant on github
-class Dogecoin(Coin):
+class Dogecoin(CoinAuxPow):
     NAME = "Dogecoin"
     SHORTNAME = "DOGE"
     NET = "mainnet"
@@ -607,8 +633,9 @@ class FairCoin(Coin):
     P2PKH_VERBYTE = bytes.fromhex("5f")
     P2SH_VERBYTE = bytes.fromhex("24")
     WIF_BYTE = bytes.fromhex("df")
-    GENESIS_HASH=('1f701f2b8de1339dc0ec908f3fb6e9b0'
-                  'b870b6f20ba893e120427e42bbc048d7')
+    GENESIS_HASH = ('1f701f2b8de1339dc0ec908f3fb6e9b0'
+                    'b870b6f20ba893e120427e42bbc048d7')
+    BASIC_HEADER_SIZE = 108
     TX_COUNT = 1000
     TX_COUNT_HEIGHT = 1000
     TX_PER_BLOCK = 1
@@ -622,22 +649,14 @@ class FairCoin(Coin):
     ]
 
     @classmethod
-    def header_offset(cls, height):
-        '''Given a header height return its offset in the headers file.
-        If header sizes change at some point, this is the only code
-        that needs updating.'''
-        return height * 108
-
-    @classmethod
-    def block_txs(cls, block, height):
-        '''Returns a list of (deserialized_tx, tx_hash) pairs given a
+    def block_full(cls, block, height):
+        '''Returns (header, [(deserialized_tx, tx_hash), ...]) given a
         block and its height.'''
 
-        if height == 0:
-            return []
-
-        deserializer = cls.deserializer()
-        return deserializer(block[cls.header_len(height):]).read_block()
+        if height > 0:
+            return super().block_full(block, height)
+        else:
+            return Block(cls.block_header(block, height), [])
 
     @classmethod
     def electrum_header(cls, header, height):
@@ -652,3 +671,50 @@ class FairCoin(Coin):
             'timestamp': timestamp,
             'creatorId': creatorId,
         }
+
+
+class Zcash(Coin):
+    NAME = "Zcash"
+    SHORTNAME = "ZEC"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("0488b21e")
+    XPRV_VERBYTES = bytes.fromhex("0488ade4")
+    P2PKH_VERBYTE = bytes.fromhex("1CB8")
+    P2SH_VERBYTE = bytes.fromhex("1CBD")
+    WIF_BYTE = bytes.fromhex("80")
+    GENESIS_HASH = ('00040fe8ec8471911baa1db1266ea15d'
+                    'd06b4a8a5c453883c000b031973dce08')
+    STATIC_BLOCK_HEADERS = False
+    BASIC_HEADER_SIZE = 140 # Excluding Equihash solution
+    TX_COUNT = 329196
+    TX_COUNT_HEIGHT = 68379
+    TX_PER_BLOCK = 5
+    IRC_PREFIX = "E_"
+    IRC_CHANNEL = "#electrum-zcash"
+    RPC_PORT = 8232
+    REORG_LIMIT = 800
+
+    @classmethod
+    def electrum_header(cls, header, height):
+        version, = struct.unpack('<I', header[:4])
+        timestamp, bits = struct.unpack('<II', header[100:108])
+
+        return {
+            'block_height': height,
+            'version': version,
+            'prev_block_hash': hash_to_str(header[4:36]),
+            'merkle_root': hash_to_str(header[36:68]),
+            'timestamp': timestamp,
+            'bits': bits,
+            'nonce': hash_to_str(header[108:140]),
+        }
+
+    @classmethod
+    def block_header(cls, block, height):
+        '''Return the block header bytes'''
+        block = DeserializerZcash(block)
+        return block.read_header(height, cls.BASIC_HEADER_SIZE)
+
+    @classmethod
+    def deserializer(cls):
+        return DeserializerZcash

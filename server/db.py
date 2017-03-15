@@ -1,4 +1,5 @@
 # Copyright (c) 2016, Neil Booth
+# Copyright (c) 2017, the ElectrumX authors
 #
 # All rights reserved.
 #
@@ -44,6 +45,14 @@ class DB(util.LoggedClass):
         self.env = env
         self.coin = env.coin
 
+        # Setup block header size handlers
+        if self.coin.STATIC_BLOCK_HEADERS:
+            self.header_offset = self.coin.static_header_offset
+            self.header_len = self.coin.static_header_len
+        else:
+            self.header_offset = self.dynamic_header_offset
+            self.header_len = self.dynamic_header_len
+
         self.logger.info('switching current directory to {}'
                          .format(env.db_dir))
         os.chdir(env.db_dir)
@@ -61,6 +70,12 @@ class DB(util.LoggedClass):
         self.headers_file = util.LogicalFile('meta/headers', 2, 16000000)
         self.tx_counts_file = util.LogicalFile('meta/txcounts', 2, 2000000)
         self.hashes_file = util.LogicalFile('meta/hashes', 4, 16000000)
+        if not self.coin.STATIC_BLOCK_HEADERS:
+            self.headers_offsets_file = util.LogicalFile(
+                'meta/headers_offsets', 2, 16000000)
+            # Write the offset of the genesis block
+            if self.headers_offsets_file.read(0, 8) != b'\x00' * 8:
+                self.headers_offsets_file.write(0, b'\x00' * 8)
 
         # tx_counts[N] has the cumulative number of txs at the end of
         # height N.  So tx_counts[0] is 1 - the genesis coinbase
@@ -184,6 +199,28 @@ class DB(util.LoggedClass):
             self.clear_excess_history(self.utxo_flush_count)
         self.clear_excess_undo_info()
 
+    def fs_update_header_offsets(self, offset_start, height_start, headers):
+        if self.coin.STATIC_BLOCK_HEADERS:
+            return
+        offset = offset_start
+        offsets = []
+        for h in headers:
+            offset += len(h)
+            offsets.append(pack("<Q", offset))
+        # For each header we get the offset of the next header, hence we
+        # start writing from the next height
+        pos = (height_start + 1) * 8
+        self.headers_offsets_file.write(pos, b''.join(offsets))
+
+    def dynamic_header_offset(self, height):
+        assert not self.coin.STATIC_BLOCK_HEADERS
+        offset, = unpack('<Q', self.headers_offsets_file.read(height * 8, 8))
+        return offset
+
+    def dynamic_header_len(self, height):
+        return self.dynamic_header_offset(height + 1)\
+               - self.dynamic_header_offset(height)
+
     def fs_update(self, fs_height, headers, block_tx_hashes):
         '''Write headers, the tx_count array and block tx hashes to disk.
 
@@ -191,24 +228,26 @@ class DB(util.LoggedClass):
         updated.  These arrays are all append only, so in a crash we
         just pick up again from the DB height.
         '''
-        blocks_done = len(self.headers)
+        blocks_done = len(headers)
+        height_start = fs_height + 1
         new_height = fs_height + blocks_done
         prior_tx_count = (self.tx_counts[fs_height] if fs_height >= 0 else 0)
         cur_tx_count = self.tx_counts[-1] if self.tx_counts else 0
         txs_done = cur_tx_count - prior_tx_count
 
-        assert len(self.tx_hashes) == blocks_done
+        assert len(block_tx_hashes) == blocks_done
         assert len(self.tx_counts) == new_height + 1
         hashes = b''.join(block_tx_hashes)
         assert len(hashes) % 32 == 0
         assert len(hashes) // 32 == txs_done
 
         # Write the headers, tx counts, and tx hashes
-        offset = self.coin.header_offset(fs_height + 1)
+        offset = self.header_offset(height_start)
         self.headers_file.write(offset, b''.join(headers))
-        offset = (fs_height + 1) * self.tx_counts.itemsize
+        self.fs_update_header_offsets(offset, height_start, headers)
+        offset = height_start * self.tx_counts.itemsize
         self.tx_counts_file.write(offset,
-                                  self.tx_counts[fs_height + 1:].tobytes())
+                                  self.tx_counts[height_start:].tobytes())
         offset = prior_tx_count * 32
         self.hashes_file.write(offset, hashes)
 
@@ -220,8 +259,8 @@ class DB(util.LoggedClass):
             raise self.DBError('{:,d} headers starting at {:,d} not on disk'
                                .format(count, start))
         if disk_count:
-            offset = self.coin.header_offset(start)
-            size = self.coin.header_offset(start + disk_count) - offset
+            offset = self.header_offset(start)
+            size = self.header_offset(start + disk_count) - offset
             return self.headers_file.read(offset, size)
         return b''
 
@@ -241,7 +280,7 @@ class DB(util.LoggedClass):
         offset = 0
         headers = []
         for n in range(count):
-            hlen = self.coin.header_len(height + n)
+            hlen = self.header_len(height + n)
             headers.append(headers_concat[offset:offset + hlen])
             offset += hlen
 
