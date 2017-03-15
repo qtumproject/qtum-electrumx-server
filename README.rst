@@ -13,6 +13,9 @@ For a future network with bigger blocks.
   :Language: Python (>= 3.5.3)
   :Author: Neil Booth
 
+This is a pre-release testing branch where new features are merged for
+inclusion into version 1.1.
+
 Getting Started
 ===============
 
@@ -126,6 +129,16 @@ Roadmap
 
 ChangeLog
 =========
+
+Version 1.1
+-----------
+
+* dynamic header support and support for Namecoin, Dogecoin and ZCash
+  (erasmospunk).
+  Dynamic header support is for coins where the block header size is not
+  constant, typically owing to merged mining.
+* new local RPC call add_peer to add a new peer to the peer list.  This
+  schedules an immediate connection for verification.
 
 Version 1.0
 -----------
