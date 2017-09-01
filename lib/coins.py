@@ -35,14 +35,15 @@ import re
 import struct
 from decimal import Decimal
 from hashlib import sha256
+import binascii
 
 import lib.util as util
 from lib.hash import Base58, hash160, double_sha256, hash_to_str
 from lib.script import ScriptPubKey
 from lib.tx import Deserializer, DeserializerSegWit, DeserializerAuxPow, \
-    DeserializerZcash, DeserializerTxTime, DeserializerReddcoin
+    DeserializerZcash, DeserializerTxTime, DeserializerReddcoin, DeserializerQtum
 from server.block_processor import BlockProcessor
-from server.daemon import Daemon, DashDaemon, LegacyRPCDaemon, FujiDaemon
+from server.daemon import Daemon, DashDaemon, LegacyRPCDaemon, FujiDaemon, QtumDaemon
 from server.session import ElectrumX, DashElectrumX
 
 
@@ -953,3 +954,69 @@ class Fujicoin(Coin):
     TX_PER_BLOCK = 1
     RPC_PORT = 3776
 #    REORG_LIMIT = 1000
+
+class Qtum(Coin):
+    NAME = "Qtum"
+    SHORTNAME = "Qtum"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("0488b21e")
+    XPRV_VERBYTES = bytes.fromhex("0488ade4")
+    P2PKH_VERBYTE = bytes.fromhex("3a")
+    P2SH_VERBYTES = [bytes.fromhex("32")]
+    WIF_BYTE = bytes.fromhex("80")
+    GENESIS_HASH = ('000000000019d6689c085ae165831e93'
+                    '4ff763ae46a2a6c172b3f1b60a8ce26f')
+    TX_COUNT = 217380620
+    TX_COUNT_HEIGHT = 464000
+    TX_PER_BLOCK = 1800
+    RPC_PORT = 3889
+    PEER_DEFAULT_PORTS = {'t': '51001', 's': '51002'}
+    PEERS = []
+    DAEMON = QtumDaemon
+    DESERIALIZER = DeserializerQtum
+    STATIC_BLOCK_HEADERS = False
+    BASIC_HEADER_SIZE = 180
+
+    @classmethod
+    def block_header(cls, block, height):
+        '''Returns the block header given a block and its height.'''
+        deserializer = cls.DESERIALIZER(block, start=cls.BASIC_HEADER_SIZE)
+        sig_length = deserializer.read_varint()
+        return block[:deserializer.cursor + sig_length]
+
+    @classmethod
+    def electrum_header(cls, header, height):
+        version, = struct.unpack('<I', header[:4])
+        timestamp, bits, nonce = struct.unpack('<III', header[68:80])
+        deserializer = cls.DESERIALIZER(header, start=cls.BASIC_HEADER_SIZE)
+        sig_length = deserializer.read_varint()
+        return {
+            'block_height': height,
+            'version': version,
+            'prev_block_hash': hash_to_str(header[4:36]),
+            'merkle_root': hash_to_str(header[36:68]),
+            'timestamp': timestamp,
+            'bits': bits,
+            'nonce': nonce,
+            'hash_state_root': hash_to_str(header[80:112]),
+            'hash_utxo_root': hash_to_str(header[112:144]),
+            'hash_prevout_stake': hash_to_str(header[144:176]),
+            'hash_prevoit_n': struct.unpack('<I', header[176:180])[0],
+            'sig': binascii.hexlify(bytearray(header[:-sig_length])).decode(),
+        }
+
+
+class QtumSkynet(Qtum):
+    NET = "skynet"
+    XPUB_VERBYTES = bytes.fromhex("043587cf")
+    XPRV_VERBYTES = bytes.fromhex("04358394")
+    P2PKH_VERBYTE = bytes.fromhex("3a")
+    P2SH_VERBYTES = [bytes.fromhex("32")]
+    WIF_BYTE = bytes.fromhex("80")
+    GENESIS_HASH = ('0000c07f635271213ea71bd68e589694b9b10b0cd2ddd195a2ab07f36cf00473')
+    REORG_LIMIT = 8000
+    TX_COUNT = 12242438
+    TX_COUNT_HEIGHT = 1035428
+    TX_PER_BLOCK = 21
+    RPC_PORT = 3889
+    PEERS = []

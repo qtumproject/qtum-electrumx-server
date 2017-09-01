@@ -341,3 +341,7 @@ class LegacyRPCDaemon(Daemon):
 
     def timestamp_safe(self, t):
         return t if isinstance(t, int) else timegm(strptime(t, "%Y-%m-%d %H:%M:%S %Z"))
+
+
+class QtumDaemon(Daemon):
+    pass

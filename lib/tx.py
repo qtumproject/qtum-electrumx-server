@@ -333,3 +333,15 @@ class DeserializerReddcoin(Deserializer):
             outputs,
             locktime,
         ), double_sha256(self.binary[start:self.cursor])
+
+
+class DeserializerQtum(DeserializerSegWit):
+
+    def read_varint(self):
+        '''
+        set _read_varint to public
+        :return: int
+        '''
+        return self._read_varint()
+
+
