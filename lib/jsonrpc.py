@@ -329,6 +329,10 @@ class JSONSessionBase(util.LoggedClass):
         self.max_send = 50000
         self.close_after_send = False
 
+        # Http Support
+        self.http = {}
+        self.http_sessions = {}
+
     def pause_writing(self):
         '''Transport calls when the send buffer is full.'''
         self.log_info('pausing processing whilst socket drains')
@@ -421,13 +425,18 @@ class JSONSessionBase(util.LoggedClass):
 
         id_ = payload.get('id')
         try:
-            binary = json.dumps(payload).encode()
+            data = json.dumps(payload)
+            use_http = self.http_sessions.pop(self.session_id, False)
+            if use_http :
+                data = 'HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}'.format(len(data), data)
+            binary = data.encode()
         except TypeError:
             msg = 'JSON encoding failure: {}'.format(payload)
             self.log_error(msg)
             binary = self.error_bytes(msg, JSONRPC.INTERNAL_ERROR, id_)
 
         error_bytes = self.is_oversized(len(binary), id_)
+
         return error_bytes or binary
 
     def decode_message(self, payload):
@@ -657,14 +666,41 @@ class JSONSessionBase(util.LoggedClass):
             self.close_connection()
             return
 
+        http = self.http.get(self.session_id, {})
         while True:
-            npos = data.find(ord('\n'))
-            if npos == -1:
-                self.parts.append(data)
-                break
+            if http.get('use', False) and http.get('finish_parsed_headers', False) :
+                # todo: must compare the length of the data
+                npos = int(http.get('headers', {}).get(b'Content-Length', 0))
+                if len(data) >= npos :
+                    http = {}
+                    self.http.pop(self.session_id)
+                else :
+                    self.parts.append(data)
+                    break
+            else :
+                npos = data.find(ord('\n'))
+                if npos == -1:
+                    self.parts.append(data)
+                    break
             tail, data = data[:npos], data[npos + 1:]
             parts, self.parts = self.parts, []
             parts.append(tail)
+            if http.get('use') :
+                if http.get('finish_parsed_headers', False) == False:
+                    if tail.find(ord('\r')) == 0 :
+                        http['finish_parsed_headers'] = True
+                    else :
+                        cpos = tail.find(ord(':'))
+                        key, value = tail[:cpos], tail[cpos+1:].strip()
+                        http['headers'][key] = value
+                    self.http[self.session_id] = http
+                    continue
+            else :
+                if tail[:4] == b'POST' :
+                    http = {'use': True, 'headers': {}, 'finish_parsed_headers': False}
+                    self.http[self.session_id] = http
+                    self.http_sessions[self.session_id] = True
+                    continue
             self.recv_count += 1
             self.last_recv = time.time()
             self.decode_message(b''.join(parts))
