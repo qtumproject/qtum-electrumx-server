@@ -34,9 +34,10 @@ class Daemon(util.LoggedClass):
     class DaemonWarmingUpError(Exception):
         '''Raised when the daemon returns an error in its results.'''
 
-    def __init__(self, urls):
+    def __init__(self, env):
         super().__init__()
-        self.set_urls(urls)
+        self.coin = env.coin
+        self.set_urls(env.coin.daemon_urls(env.daemon_url))
         self._height = None
         self._mempool_hashes = set()
         self.mempool_refresh_event = asyncio.Event()
