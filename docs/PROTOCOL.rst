@@ -2,11 +2,8 @@
 Electrum Protocol
 =================
 
-Until now there was no written specification of the Electrum protocol
-that I am aware of; this document is an attempt to fill that gap.  It
-is intended to be a reference for client and server authors alike.
-[Since writing this I learnt there has been a skeleton protocol
-description on docs.github.io].
+This is intended to be a reference for client and server authors
+alike.
 
 I have attempted to ensure what is written is correct for the three
 known server implementations: electrum-server, jelectrum and
@@ -609,22 +606,29 @@ subscription and the server must send no notifications.
   missing then the server does not support that transport.
 
 
-Version 1.1 (provisional)
--------------------------
+Version 1.1
+-----------
 
 This protocol version is the same as version `1.0` except for the
 following changes:
 
-* improved semantics of `server.version` to aid protocol negotiation
-* deprecated methods `blockchain.address.get_proof`,
+* improved semantics of `server.version` to aid protocol negotiation,
+  and a changed return value.
+* version 1.0 methods `blockchain.address.get_proof`,
   `blockchain.utxo.get_address` and `blockchain.numblocks.subscribe`
   have been removed.
-* method `blockchain.transaction.get` no longer takes a *height*
-  argument
+* method `blockchain.transaction.get` no longer takes the *height*
+  argument that was ignored in 1.0, providing one will return an
+  error.
 * method `blockchain.transaction.broadcast` returns errors like any
   other JSON RPC call.  A *tx_hash* result is only returned on
   success.
-* new methods `server.features` and `server.add_peer`
+* new methods `blockchain.scripthash.get_balance`,
+  `blockchain.scripthash.get_history`,
+  `blockchain.scripthash.get_mempool`,
+  `blockchain.scripthash.listunspent`,
+  `blockchain.scripthash.subscribe`,
+  `server.features` and `server.add_peer`.
 
 
 server.version
@@ -633,7 +637,7 @@ server.version
 Identify the client and inform the server the range of understood
 protocol versions.
 
-  server.version(**client_name**, **protocol_version** = ["1.1", "1,1"])
+  server.version(**client_name**, **protocol_version** = ["1.1", "1.1"])
 
 **client_name**
 
@@ -641,10 +645,11 @@ protocol versions.
 
 **protocol_verion**
 
-  Optional with default value ["1.1", "1,1"].
+  Optional with default value ["1.1", "1.1"].
 
   It must be a pair [`protocol_min`, `protocol_max`], each of which is
-  a string.
+  a string.  If `protocol_min` and `protocol_max` are the same, they
+  can be passed as a single string rather than as a pair of strings.
 
 The server should use the highest protocol version both support:
 
@@ -652,7 +657,7 @@ The server should use the highest protocol version both support:
 
 If this is below the value
 
-  min(client.protocol_min, server.protocol_min)
+  max(client.protocol_min, server.protocol_min)
 
 then there is no protocol version in common and the server must close
 the connection.  Otherwise it should send a response appropriate for
@@ -660,9 +665,9 @@ that protocol version.
 
 **Response**
 
-  A string
+  An array of length 2
 
-     "m.n"
+     [<software version string>, <protocol version string>]
 
   identifying the server and the protocol version that will be used
   for future communication.
@@ -671,7 +676,98 @@ that protocol version.
 
 ::
 
-  server.version('2.7.11', ["1.0", "2.0"])
+  server.version('2.7.11', ["0.10", "1.1"])
+
+**Example Response**
+
+  ["ElectrumX 1.0.18", "1.1"]
+
+
+blockchain.scripthash.get_balance
+=================================
+
+Return the confirmed and unconfirmed balances of a script hash.
+
+  blockchain.scripthash.get_balance(**scripthash**)
+
+  **scripthash**
+
+    The script hash as a hexadecimal string.
+
+**Response**
+
+  As for `blockchain.address.get_balance`.
+
+
+blockchain.scripthash.get_history
+=================================
+
+Return the confirmed and unconfirmed history of a script hash.
+
+  blockchain.scripthash.get_history(**scripthash**)
+
+  **scripthash**
+
+    The script hash as a hexadecimal string.
+
+**Response**
+
+  As for `blockchain.address.get_history`.
+
+
+blockchain.scripthash.get_mempool
+=================================
+
+Return the unconfirmed transactions of a script hash.
+
+  blockchain.scripthash.get_mempool(**scripthash**)
+
+  **scripthash**
+
+    The script hash as a hexadecimal string.
+
+**Response**
+
+  As for `blockchain.address.get_mempool`.
+
+
+blockchain.scripthash.listunspent
+=================================
+
+Return an ordered list of UTXOs sent to a script hash.
+
+  blockchain.scripthash.listunspent(**scripthash**)
+
+  **scripthash**
+
+    The script hash as a hexadecimal string.
+
+**Response**
+
+  As for `blockchain.address.listunspent`.
+
+
+blockchain.scripthash.subscribe
+===============================
+
+Subscribe to a script hash.
+
+  blockchain.scripthash.subscribe(**scripthash**)
+
+  **scripthash**
+
+    The script hash as a hexadecimal string.
+
+**Response**
+
+  The *status* [1]_ of the script hash.
+
+**Notifications**
+
+  As this is a subcription, the client will receive a notification
+  when the status of the script hash changes.  The parameters are:
+
+    [**scripthash**, **status**]
 
 
 server.add_peer
@@ -730,6 +826,13 @@ Get a list of features and services supported by the server.
   The hash of the genesis block.  This is used to detect if a peer is
   connected to one serving a different network.
 
+* **hash_function**
+
+  The hash function the server uses for script hashing.  The client
+  must use this function to hash pay-to-scripts to produce script
+  hashes to send to the server.  The default is "sha256".  "sha256" is
+  currently the only acceptable value.
+
 * **server_version**
 
   A string that identifies the server software.  Should be the same as
@@ -738,7 +841,7 @@ Get a list of features and services supported by the server.
 * **protocol_max**
 * **protocol_min**
 
-  Strings that are the minimum and maximum Electrum protcol versions
+  Strings that are the minimum and maximum Electrum protocol versions
   this server speaks.  The maximum value should be the same as what
   would suffix the letter **v** in the IRC real name.  Example: "1.1".
 
@@ -758,7 +861,8 @@ Get a list of features and services supported by the server.
       "protocol_max": "1.0",
       "protocol_min": "1.0",
       "pruning": null,
-      "server_version": "ElectrumX 1.0.1"
+      "server_version": "ElectrumX 1.0.17",
+      "hash_function": "sha256"
   }
 
 .. _JSON RPC 1.0: http://json-rpc.org/wiki/specification
