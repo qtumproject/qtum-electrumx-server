@@ -161,6 +161,19 @@ def test_BANNER_FILE():
 def test_ANON_LOGS():
     assert_boolean('ANON_LOGS', 'anon_logs', False)
 
+def test_EVENT_LOOP_POLICY():
+    e = Env()
+    assert e.loop_policy is None
+    os.environ['EVENT_LOOP_POLICY'] = 'foo'
+    with pytest.raises(Env.Error):
+        Env()
+    os.environ['EVENT_LOOP_POLICY'] = 'uvloop'
+    try:
+        Env()
+    except ImportError:
+        pass
+    del os.environ['EVENT_LOOP_POLICY']
+
 def test_PEER_DISCOVERY():
     assert_boolean('PEER_DISCOVERY', 'peer_discovery', True)
 
