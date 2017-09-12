@@ -344,18 +344,6 @@ class ElectrumX(SessionBase):
             raise RPCError('the transaction was rejected by network rules.'
                            '\n\n{}\n[{}]'.format(message, raw_tx))
 
-            # if 'non-mandatory-script-verify-flag' in message:
-            #     return (
-            #         'Your client produced a transaction that is not accepted '
-            #         'by the network any more.  Please upgrade to Electrum '
-            #         '2.5.1 or newer.'
-            #     )
-            #
-            # return (
-            #     'The transaction was rejected by network rules.  ({})\n[{}]'
-            #     .format(message, raw_tx)
-            # )
-
     async def transaction_broadcast_1_0(self, raw_tx):
         '''Broadcast a raw transaction to the network.
         raw_tx: the raw transaction as a hexadecimal string'''
@@ -390,6 +378,11 @@ class ElectrumX(SessionBase):
                            .format(version_str), JSONRPC.FATAL_ERROR)
 
         handlers = {
+            'blockchain.address.get_balance': controller.address_get_balance,
+            'blockchain.address.get_history': controller.address_get_history,
+            'blockchain.address.get_mempool': controller.address_get_mempool,
+            'blockcahin.address.get_proof': controller.address_get_proof,
+            'blockchain.address.listunspent': controller.address_listunspent,
             'blockchain.address.subscribe': self.address_subscribe,
             'blockchain.block.get_chunk': self.block_get_chunk,
             'blockchain.headers.subscribe': self.headers_subscribe,
@@ -412,6 +405,14 @@ class ElectrumX(SessionBase):
             del handlers['blockchain.utxo.get_address']
             # Add new handlers
             handlers.update({
+                'blockchain.scripthash.get_balance':
+                    controller.scripthash_get_balance,
+                'blockchain.scripthash.get_history':
+                    controller.scripthash_get_history,
+                'blockchain.scripthash.get_mempool':
+                    controller.scripthash_get_mempool,
+                'blockchain.scripthash.listunspent':
+                    controller.scripthash_listunspent,
                 'blockchain.scripthash.subscribe': self.scripthash_subscribe,
                 'blockchain.transaction.broadcast': self.transaction_broadcast,
                 'blockchain.transaction.get': controller.transaction_get,
