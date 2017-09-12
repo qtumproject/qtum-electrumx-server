@@ -539,15 +539,15 @@ class Controller(util.LoggedClass):
     @staticmethod
     def sessions_text_lines(data):
         '''A generator returning lines for a list of sessions.
-
         data is the return value of rpc_sessions().'''
-        fmt = ('{:<6} {:<5} {:>17} {:>5} {:>5} '
+        fmt = ('{:<6} {:<5} {:>17} {:>5} {:>5} {:>5} '
                '{:>7} {:>7} {:>7} {:>7} {:>7} {:>9} {:>21}')
-        yield fmt.format('ID', 'Flags', 'Client', 'Reqs', 'Txs', 'Subs',
+        yield fmt.format('ID', 'Flags', 'Client', 'Proto',
+                         'Reqs', 'Txs', 'Subs',
                          'Recv', 'Recv KB', 'Sent', 'Sent KB', 'Time', 'Peer')
-        for (id_, flags, peer, client, reqs, txs_sent, subs,
+        for (id_, flags, peer, client, proto, reqs, txs_sent, subs,
              recv_count, recv_size, send_count, send_size, time) in data:
-            yield fmt.format(id_, flags, client,
+            yield fmt.format(id_, flags, client, proto,
                              '{:,d}'.format(reqs),
                              '{:,d}'.format(txs_sent),
                              '{:,d}'.format(subs),
@@ -565,6 +565,7 @@ class Controller(util.LoggedClass):
                  session.flags(),
                  session.peername(for_log=for_log),
                  session.client,
+                 session.protocol_version,
                  session.count_pending_items(),
                  session.txs_sent,
                  session.sub_count(),

@@ -10,9 +10,10 @@
 import codecs
 import time
 from functools import partial
-import lib.util as util
+
 from lib.hash import sha256, hash_to_str
 from lib.jsonrpc import JSONSession, RPCError, JSONRPCv2, JSONRPC
+import lib.util as util
 from server.daemon import DaemonError
 import server.version as version
 
@@ -112,7 +113,8 @@ class ElectrumX(SessionBase):
         self.hashX_subs = {}
         self.mempool_statuses = {}
         self.chunk_indices = []
-        self.set_protocol_handlers(None)
+        self.protocol_version = None
+        self.set_protocol_handlers((1, 0))
 
     def sub_count(self):
         return len(self.hashX_subs)
@@ -237,7 +239,7 @@ class ElectrumX(SessionBase):
     async def scripthash_subscribe(self, scripthash):
         '''Subscribe to a script hash.
 
-        script_hash: the SHA256 hash of the script to subscribe to'''
+        scripthash: the SHA256 hash of the script to subscribe to'''
         hashX = self.controller.scripthash_to_hashX(scripthash)
         return await self.hashX_subscribe(hashX, scripthash)
 
@@ -320,10 +322,24 @@ class ElectrumX(SessionBase):
                                             in self.client.split('.'))
             except Exception:
                 pass
-        self.log_info('protocol version {} requested'.format(protocol_version))
-        self.set_protocol_handlers(protocol_version)
 
-        return version.VERSION
+        # Find the highest common protocol version.  Disconnect if
+        # that protocol version in unsupported.
+        ptuple = util.protocol_version(protocol_version, version.PROTOCOL_MIN,
+                                       version.PROTOCOL_MAX)
+        if ptuple is None:
+            self.log_info('unsupported protocol version request {}'
+                          .format(protocol_version))
+            raise RPCError('unsupported protocol version: {}'
+                           .format(protocol_version), JSONRPC.FATAL_ERROR)
+
+        self.set_protocol_handlers(ptuple)
+
+        # The return value depends on the protocol version
+        if ptuple < (1, 1):
+            return version.VERSION
+        else:
+            return (version.VERSION, self.protocol_version)
 
     async def transaction_broadcast(self, raw_tx):
         '''Broadcast a raw transaction to the network.
@@ -346,6 +362,7 @@ class ElectrumX(SessionBase):
 
     async def transaction_broadcast_1_0(self, raw_tx):
         '''Broadcast a raw transaction to the network.
+
         raw_tx: the raw transaction as a hexadecimal string'''
         # An ugly API: current Electrum clients only pass the raw
         # transaction in hex and expect error messages to be returned in
@@ -364,19 +381,12 @@ class ElectrumX(SessionBase):
 
             return message
 
-    def set_protocol_handlers(self, version_req):
-        # Find the highest common protocol version.  Disconnect if
-        # that protocol version in unsupported.
-        ptuple = util.protocol_version(version_req, version.PROTOCOL_MIN,
-                                       version.PROTOCOL_MAX)
-        if ptuple is None:
-            self.log_info('unsupported protocol version request {}'
-                          .format(version_req))
-            raise RPCError('unsupported protocol version: {}'
-                           .format(version_req), JSONRPC.FATAL_ERROR)
-
+    def set_protocol_handlers(self, ptuple):
+        protocol_version = '.'.join(str(part) for part in ptuple)
+        if protocol_version == self.protocol_version:
+            return
+        self.protocol_version = protocol_version
         controller = self.controller
-
         handlers = {
             'blockchain.address.get_balance': controller.address_get_balance,
             'blockchain.address.get_history': controller.address_get_history,
@@ -406,13 +416,13 @@ class ElectrumX(SessionBase):
             # Add new handlers
             handlers.update({
                 'blockchain.scripthash.get_balance':
-                    controller.scripthash_get_balance,
+                controller.scripthash_get_balance,
                 'blockchain.scripthash.get_history':
-                    controller.scripthash_get_history,
+                controller.scripthash_get_history,
                 'blockchain.scripthash.get_mempool':
-                    controller.scripthash_get_mempool,
+                controller.scripthash_get_mempool,
                 'blockchain.scripthash.listunspent':
-                    controller.scripthash_listunspent,
+                controller.scripthash_listunspent,
                 'blockchain.scripthash.subscribe': self.scripthash_subscribe,
                 'blockchain.transaction.broadcast': self.transaction_broadcast,
                 'blockchain.transaction.get': controller.transaction_get,
@@ -432,6 +442,7 @@ class LocalRPC(SessionBase):
         super().__init__(*args, **kwargs)
         self.client = 'RPC'
         self.max_send = 0
+        self.protocol_version = 'RPC'
 
     def request_handler(self, method):
         '''Return the async handler for the given request method.'''
@@ -443,13 +454,14 @@ class DashElectrumX(ElectrumX):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.electrumx_handlers['masternode.announce.broadcast'] = self.masternode_announce_broadcast
-        self.electrumx_handlers['masternode.subscribe'] = self.masternode_subscribe
+        self.electrumx_handlers['masternode.announce.broadcast'] =\
+            self.masternode_announce_broadcast
+        self.electrumx_handlers['masternode.subscribe'] =\
+            self.masternode_subscribe
         self.mns = set()
 
     async def notify(self, height, touched):
         '''Notify the client about changes in masternode list.'''
-
         await super().notify(height, touched)
 
         for masternode in self.mns:
@@ -467,7 +479,6 @@ class DashElectrumX(ElectrumX):
         Force version string response for Electrum-Dash 2.6.4 client caused by
         https://github.com/dashpay/electrum-dash/commit/638cf6c0aeb7be14a85ad98f873791cb7b49ee29
         '''
-
         default_return = super().server_version(client_name, protocol_version)
         if self.client == '2.6.4':
             return '1.0'
@@ -475,10 +486,11 @@ class DashElectrumX(ElectrumX):
 
     # Masternode command handlers
     async def masternode_announce_broadcast(self, signmnb):
-        '''Pass through the masternode announce message to be broadcast by the daemon.'''
-
+        '''Pass through the masternode announce message to be broadcast
+        by the daemon.'''
         try:
-            mnb_info = await self.daemon.masternode_broadcast(['relay', signmnb])
+            mnb_info = await self.daemon.masternode_broadcast(
+                ['relay', signmnb])
             return mnb_info
         except DaemonError as e:
             error = e.args[0]
