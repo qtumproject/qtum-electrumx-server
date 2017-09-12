@@ -15,6 +15,7 @@ BASE_DB_DIR = '/some/dir'
 base_environ = {
     'DB_DIRECTORY': BASE_DB_DIR,
     'DAEMON_URL': BASE_DAEMON_URL,
+    'COIN': 'BitcoinCash',
 }
 
 def setup_base_env():
@@ -77,12 +78,15 @@ def test_COIN_NET():
     '''Test COIN and NET defaults and redirection.'''
     setup_base_env()
     e = Env()
-    assert e.coin == lib_coins.Bitcoin
+    assert e.coin == lib_coins.BitcoinCash
     os.environ['NET'] = 'testnet'
     e = Env()
-    assert e.coin == lib_coins.BitcoinTestnet
+    assert e.coin == lib_coins.BitcoinCashTestnet
+    os.environ['NET'] = ' testnet '
+    e = Env()
+    assert e.coin == lib_coins.BitcoinCashTestnet
     os.environ.pop('NET')
-    os.environ['COIN'] = 'Litecoin'
+    os.environ['COIN'] = ' Litecoin '
     e = Env()
     assert e.coin == lib_coins.Litecoin
     os.environ['NET'] = 'testnet'
@@ -96,13 +100,27 @@ def test_HOST():
     assert_default('HOST', 'host', 'localhost')
     os.environ['HOST'] = ''
     e = Env()
-    assert e.cs_host() == ''
+    assert e.cs_host(for_rpc=False) == ''
     os.environ['HOST'] = '192.168.0.1,23.45.67.89'
     e = Env()
-    assert e.cs_host() == ['192.168.0.1', '23.45.67.89']
+    assert e.cs_host(for_rpc=False) == ['192.168.0.1', '23.45.67.89']
+    os.environ['HOST'] = '192.168.0.1 , 23.45.67.89 '
+    e = Env()
+    assert e.cs_host(for_rpc=False) == ['192.168.0.1', '23.45.67.89']
+
+def test_RPC_HOST():
+    assert_default('RPC_HOST', 'rpc_host', 'localhost')
+    os.environ['RPC_HOST'] = ''
+    e = Env()
+    # Blank reverts to localhost
+    assert e.cs_host(for_rpc=True) == 'localhost'
+    os.environ['RPC_HOST'] = '127.0.0.1, ::1'
+    e = Env()
+    assert e.cs_host(for_rpc=True) == ['127.0.0.1', '::1']
 
 def test_REORG_LIMIT():
-    assert_integer('REORG_LIMIT', 'reorg_limit', lib_coins.Bitcoin.REORG_LIMIT)
+    assert_integer('REORG_LIMIT', 'reorg_limit',
+                   lib_coins.BitcoinCash.REORG_LIMIT)
 
 def test_TCP_PORT():
     assert_integer('TCP_PORT', 'tcp_port', None)
@@ -164,9 +182,6 @@ def test_BANNER_FILE():
     assert e.banner_file == 'banner_file'
     assert e.tor_banner_file == 'tor_banner_file'
 
-def test_ANON_LOGS():
-    assert_boolean('ANON_LOGS', 'anon_logs', False)
-
 def test_EVENT_LOOP_POLICY():
     e = Env()
     assert e.loop_policy is None
@@ -179,6 +194,9 @@ def test_EVENT_LOOP_POLICY():
     except ImportError:
         pass
     del os.environ['EVENT_LOOP_POLICY']
+
+def test_ANON_LOGS():
+    assert_boolean('ANON_LOGS', 'anon_logs', False)
 
 def test_PEER_DISCOVERY():
     assert_boolean('PEER_DISCOVERY', 'peer_discovery', True)
