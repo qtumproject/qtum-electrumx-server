@@ -955,6 +955,7 @@ class Fujicoin(Coin):
     RPC_PORT = 3776
 #    REORG_LIMIT = 1000
 
+
 class Qtum(Coin):
     NAME = "Qtum"
     SHORTNAME = "Qtum"
@@ -1008,8 +1009,8 @@ class Qtum(Coin):
 
 class QtumSkynet(Qtum):
     NET = "skynet"
-    XPUB_VERBYTES = bytes.fromhex("043587cf")
-    XPRV_VERBYTES = bytes.fromhex("04358394")
+    XPUB_VERBYTES = bytes.fromhex("0488B21E")
+    XPRV_VERBYTES = bytes.fromhex("0488ADE4")
     P2PKH_VERBYTE = bytes.fromhex("3a")
     P2SH_VERBYTES = [bytes.fromhex("32")]
     WIF_BYTE = bytes.fromhex("80")
