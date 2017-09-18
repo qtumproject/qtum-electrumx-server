@@ -1002,8 +1002,8 @@ class Qtum(Coin):
             'hash_state_root': hash_to_str(header[80:112]),
             'hash_utxo_root': hash_to_str(header[112:144]),
             'hash_prevout_stake': hash_to_str(header[144:176]),
-            'hash_prevoit_n': struct.unpack('<I', header[176:180])[0],
-            'sig': binascii.hexlify(bytearray(header[:-sig_length])).decode(),
+            'hash_prevout_n': struct.unpack('<I', header[176:180])[0],
+            'sig': hash_to_str(header[:-sig_length-1:-1]),
         }
 
 
@@ -1021,3 +1021,24 @@ class QtumSkynet(Qtum):
     TX_PER_BLOCK = 21
     RPC_PORT = 3889
     PEERS = []
+
+    @classmethod
+    def electrum_header(cls, header, height):
+        version, = struct.unpack('<I', header[:4])
+        timestamp, bits, nonce = struct.unpack('<III', header[68:80])
+        deserializer = cls.DESERIALIZER(header, start=cls.BASIC_HEADER_SIZE)
+        sig_length = deserializer.read_varint()
+        return {
+            'block_height': height,
+            'version': version,
+            'prev_block_hash': hash_to_str(header[4:36]),
+            'merkle_root': hash_to_str(header[36:68]),
+            'timestamp': timestamp,
+            'bits': bits,
+            'nonce': nonce,
+            'hash_state_root': hash_to_str(header[80:112]),
+            'hash_utxo_root': hash_to_str(header[112:144]),
+            'hash_prevout_stake': hash_to_str(header[144:176]),
+            'hash_prevout_n': struct.unpack('<I', header[176:180])[0],
+            'sig': hash_to_str(header[:-sig_length-1:-1]),
+        }
