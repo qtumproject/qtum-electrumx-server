@@ -13,5 +13,6 @@ export SSL_PORT=52002
 export SSL_KEYFILE=~/.electrumx/keyfile.key
 export SSL_CERTFILE=~/.electrumx/certfile.crt
 export RPC_PORT=8200
+export ALLOW_ROOT=true
 
 python3 electrumx_server.py
