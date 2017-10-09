@@ -77,6 +77,7 @@ class Coin(object):
     # Peer discovery
     PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     PEERS = []
+    POW_BLOCK_COUNT = -1
 
     @classmethod
     def lookup_coin_class(cls, name, net):
@@ -977,6 +978,7 @@ class Qtum(Coin):
     DESERIALIZER = DeserializerQtum
     STATIC_BLOCK_HEADERS = False
     BASIC_HEADER_SIZE = 180
+    POW_BLOCK_COUNT = 5000
 
     @classmethod
     def block_header(cls, block, height):
