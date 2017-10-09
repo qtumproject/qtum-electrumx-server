@@ -785,7 +785,11 @@ class Controller(util.LoggedClass):
         next_height = self.bp.db_height + 1
 
         if self.coin.POW_BLOCK_COUNT > 0:
-            start_height = 0 if index == 0 else self.coin.POW_BLOCK_COUNT + (index-1)*chunk_size
+            if index == 0:
+                start_height = 0
+                chunk_size = self.coin.POW_BLOCK_COUNT
+            else:
+                start_height = self.coin.POW_BLOCK_COUNT + (index-1)*chunk_size
         else:
             start_height = index * chunk_size
 
