@@ -783,17 +783,7 @@ class Controller(util.LoggedClass):
         '''Return header chunk as hex.  Index is a non-negative integer.'''
         chunk_size = self.coin.CHUNK_SIZE
         next_height = self.bp.db_height + 1
-
-        if self.coin.POW_BLOCK_COUNT > 0:
-            if index == 0:
-                start_height = 0
-                chunk_size = self.coin.POW_BLOCK_COUNT
-            else:
-                start_height = self.coin.POW_BLOCK_COUNT + (index-1)*chunk_size
-        else:
-            start_height = index * chunk_size
-
-        start_height = min(start_height, next_height)
+        start_height = min(index * chunk_size, next_height)
         count = min(next_height - start_height, chunk_size)
         return self.bp.read_headers(start_height, count).hex()
 
