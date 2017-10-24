@@ -5,11 +5,11 @@ ulimit -n 10000
 
 export COIN=Qtum
 export DAEMON_URL=http://user:password@127.0.0.1:3889
-export NET=skynet
+export NET=mainnet
 export DB_DIRECTORY=~/.electrumx/db
-export TCP_PORT=52001
 export HOST=0.0.0.0
-export SSL_PORT=52002
+export TCP_PORT=50001
+export SSL_PORT=50002
 export SSL_KEYFILE=~/.electrumx/keyfile.key
 export SSL_CERTFILE=~/.electrumx/certfile.crt
 export RPC_PORT=8200

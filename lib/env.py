@@ -41,7 +41,7 @@ class EnvBase(lib_util.LoggedClass):
     def integer(self, envvar, default):
         value = environ.get(envvar)
         if value is None:
-            return default
+            return int(default) if default else default
         try:
             return int(value)
         except Exception:

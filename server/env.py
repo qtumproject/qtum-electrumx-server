@@ -36,12 +36,13 @@ class Env(EnvBase):
         self.host = self.default('HOST', 'localhost')
         self.reorg_limit = self.integer('REORG_LIMIT', self.coin.REORG_LIMIT)
         # Server stuff
-        self.tcp_port = self.integer('TCP_PORT', None)
-        self.ssl_port = self.integer('SSL_PORT', None)
+        print('self.coin.PEER_DEFAULT_PORTS', self.coin.PEER_DEFAULT_PORTS)
+        self.tcp_port = self.integer('TCP_PORT', self.coin.PEER_DEFAULT_PORTS['t'])
+        self.ssl_port = self.integer('SSL_PORT', self.coin.PEER_DEFAULT_PORTS['s'])
         if self.ssl_port:
             self.ssl_certfile = self.required('SSL_CERTFILE')
             self.ssl_keyfile = self.required('SSL_KEYFILE')
-        self.rpc_port = self.integer('RPC_PORT', 8000)
+        self.rpc_port = self.integer('RPC_PORT', self.coin.RPC_PORT)
         self.max_subscriptions = self.integer('MAX_SUBSCRIPTIONS', 10000)
         self.banner_file = self.default('BANNER_FILE', None)
         self.tor_banner_file = self.default('TOR_BANNER_FILE',

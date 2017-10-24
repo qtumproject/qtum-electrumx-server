@@ -78,6 +78,7 @@ class Coin(object):
     PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     PEERS = []
     POW_BLOCK_COUNT = -1
+    RPC_PORT = 8000
 
     @classmethod
     def lookup_coin_class(cls, name, net):
@@ -966,13 +967,12 @@ class Qtum(Coin):
     P2PKH_VERBYTE = bytes.fromhex("3a")
     P2SH_VERBYTES = [bytes.fromhex("32")]
     WIF_BYTE = bytes.fromhex("80")
-    GENESIS_HASH = ('000000000019d6689c085ae165831e93'
-                    '4ff763ae46a2a6c172b3f1b60a8ce26f')
+    GENESIS_HASH = '000075aef83cf2853580f8ae8ce6f8c3096cfa21d98334d6e3f95e5582ed986c'
     TX_COUNT = 217380620
     TX_COUNT_HEIGHT = 464000
     TX_PER_BLOCK = 1800
     RPC_PORT = 3889
-    PEER_DEFAULT_PORTS = {'t': '51001', 's': '51002'}
+    PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     PEERS = []
     DAEMON = QtumDaemon
     DESERIALIZER = DeserializerQtum
@@ -1011,17 +1011,29 @@ class Qtum(Coin):
         return header
 
 
+class QtumTestnet(Qtum):
+    NET = "testnet"
+    XPUB_VERBYTES = bytes.fromhex("043587CF")
+    XPRV_VERBYTES = bytes.fromhex("04358394")
+    GENESIS_HASH = '0000e803ee215c0684ca0d2f9220594d3f828617972aad66feb2ba51f5e14222'
+    REORG_LIMIT = 8000
+    TX_COUNT = 12242438
+    TX_COUNT_HEIGHT = 1035428
+    TX_PER_BLOCK = 21
+    RPC_PORT = 13889
+    PEERS = []
+    PEER_DEFAULT_PORTS = {'t': '51001', 's': '51002'}
+
+
 class QtumSkynet(Qtum):
     NET = "skynet"
     XPUB_VERBYTES = bytes.fromhex("0488B21E")
     XPRV_VERBYTES = bytes.fromhex("0488ADE4")
-    P2PKH_VERBYTE = bytes.fromhex("3a")
-    P2SH_VERBYTES = [bytes.fromhex("32")]
-    WIF_BYTE = bytes.fromhex("80")
-    GENESIS_HASH = ('0000c07f635271213ea71bd68e589694b9b10b0cd2ddd195a2ab07f36cf00473')
+    GENESIS_HASH = '0000c07f635271213ea71bd68e589694b9b10b0cd2ddd195a2ab07f36cf00473'
     REORG_LIMIT = 8000
     TX_COUNT = 12242438
     TX_COUNT_HEIGHT = 1035428
     TX_PER_BLOCK = 21
     RPC_PORT = 3889
     PEERS = []
+    PEER_DEFAULT_PORTS = {'t': '52001', 's': '52002'}
