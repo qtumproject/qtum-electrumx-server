@@ -184,17 +184,6 @@ calls to this method from a single connection.
 The result should be True if accepted and False otherwise.
 
 
-IRC
----
-
-Other server implementations may not have implemented the peer
-discovery protocol yet.  Whilst we transition away from IRC, in order
-to keep these servers in the connected peer set, having one or two in
-the hard-coded peer list used to seed this process should suffice.
-Any peer on IRC will report other peers on IRC, and so if any one of
-them is known to any single peer implementing this protocol, they will
-all become known to all peers quite rapidly.
-
 
 Notes to Implementators
 -----------------------

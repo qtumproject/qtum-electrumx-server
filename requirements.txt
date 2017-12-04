@@ -3,6 +3,5 @@ pylru
 ecdsa
 pytest-cov
 python-coveralls
-irc
 x11_hash
 plyvel

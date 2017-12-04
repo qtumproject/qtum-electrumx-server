@@ -71,10 +71,6 @@ class Coin(object):
     BLOCK_PROCESSOR = BlockProcessor
     XPUB_VERBYTES = bytes('????', 'utf-8')
     XPRV_VERBYTES = bytes('????', 'utf-8')
-    IRC_PREFIX = None
-    IRC_SERVER = "irc.freenode.net"
-    IRC_PORT = 6667
-    # Peer discovery
     PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     PEERS = []
     POW_BLOCK_COUNT = -1
@@ -90,8 +86,6 @@ class Coin(object):
             if (coin.NAME.lower() == name.lower() and
                     coin.NET.lower() == net.lower()):
                 coin_req_attrs = req_attrs.copy()
-                if coin.IRC_PREFIX is not None:
-                    coin_req_attrs.append('IRC_CHANNEL')
                 missing = [attr for attr in coin_req_attrs
                            if not hasattr(coin, attr)]
                 if missing:
@@ -429,7 +423,6 @@ class BitcoinNolnet(Bitcoin):
     TX_COUNT = 583589
     TX_COUNT_HEIGHT = 8617
     TX_PER_BLOCK = 50
-    IRC_PREFIX = "EN_"
     RPC_PORT = 28332
     PEER_DEFAULT_PORTS = {'t': '52001', 's': '52002'}
     PEERS = [
@@ -498,8 +491,6 @@ class Viacoin(AuxPowMixin, Coin):
     TX_COUNT = 113638
     TX_COUNT_HEIGHT = 3473674
     TX_PER_BLOCK = 30
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL="#vialectrum"
     RPC_PORT = 5222
     REORG_LIMIT = 5000
     PEERS = [
@@ -545,8 +536,6 @@ class Namecoin(AuxPowMixin, Coin):
     TX_COUNT = 4415768
     TX_COUNT_HEIGHT = 329065
     TX_PER_BLOCK = 10
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-nmc"
 
 
 class NamecoinTestnet(Namecoin):
@@ -574,8 +563,6 @@ class Dogecoin(AuxPowMixin, Coin):
     TX_COUNT = 27583427
     TX_COUNT_HEIGHT = 1604979
     TX_PER_BLOCK = 20
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-doge"
     REORG_LIMIT = 2000
 
 
@@ -606,8 +593,6 @@ class Dash(Coin):
     TX_COUNT = 2157510
     TX_PER_BLOCK = 4
     RPC_PORT = 9998
-    IRC_PREFIX = "D_"
-    IRC_CHANNEL = "#electrum-dash"
     PEERS = [
         'electrum.dash.org s t',
         'electrum.masternode.io s t',
@@ -640,7 +625,6 @@ class DashTestnet(Dash):
     TX_COUNT = 132681
     TX_PER_BLOCK = 1
     RPC_PORT = 19998
-    IRC_PREFIX = "d_"
     PEER_DEFAULT_PORTS = {'t': '51001', 's': '51002'}
     PEERS = [
         'electrum.dash.siampm.com s t',
@@ -659,8 +643,6 @@ class Argentum(AuxPowMixin, Coin):
     TX_COUNT = 2263089
     TX_COUNT_HEIGHT = 2050260
     TX_PER_BLOCK = 2000
-    IRC_PREFIX = "A_"
-    IRC_CHANNEL = "#electrum-arg"
     RPC_PORT = 13581
 
 
@@ -686,8 +668,6 @@ class DigiByte(Coin):
     TX_COUNT = 1046018
     TX_COUNT_HEIGHT = 1435000
     TX_PER_BLOCK = 1000
-    IRC_PREFIX = "DE_"
-    IRC_CHANNEL = "#electrum-dgb"
     RPC_PORT = 12022
 
 
@@ -698,8 +678,6 @@ class DigiByteTestnet(DigiByte):
     WIF_BYTE = bytes.fromhex("ef")
     GENESIS_HASH = ('b5dca8039e300198e5fe7cd23bdd1728'
                     'e2a444af34c447dbd0916fa3430a68c2')
-    IRC_PREFIX = "DET_"
-    IRC_CHANNEL = "#electrum-dgb"
     RPC_PORT = 15022
     REORG_LIMIT = 2000
 
@@ -717,8 +695,6 @@ class FairCoin(Coin):
     TX_COUNT = 505
     TX_COUNT_HEIGHT = 470
     TX_PER_BLOCK = 1
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#fairlectrum"
     RPC_PORT = 40405
     PEER_DEFAULT_PORTS = {'t': '51811', 's': '51812'}
     PEERS = [
@@ -764,8 +740,6 @@ class Zcash(Coin):
     TX_COUNT = 329196
     TX_COUNT_HEIGHT = 68379
     TX_PER_BLOCK = 5
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-zcash"
     RPC_PORT = 8232
     REORG_LIMIT = 800
 
@@ -803,8 +777,6 @@ class Einsteinium(Coin):
     TX_COUNT = 2087559
     TX_COUNT_HEIGHT = 1358517
     TX_PER_BLOCK = 2
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-emc2"
     RPC_PORT = 41879
     REORG_LIMIT = 2000
 
@@ -823,8 +795,6 @@ class Blackcoin(Coin):
     TX_COUNT = 4594999
     TX_COUNT_HEIGHT = 1667070
     TX_PER_BLOCK = 3
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-blk"
     RPC_PORT = 15715
     REORG_LIMIT = 5000
     HEADER_HASH = None
@@ -857,8 +827,6 @@ class Peercoin(Coin):
     TX_COUNT = 1207356
     TX_COUNT_HEIGHT = 306425
     TX_PER_BLOCK = 4
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-ppc"
     RPC_PORT = 9902
     REORG_LIMIT = 5000
 
@@ -876,8 +844,6 @@ class Reddcoin(Coin):
     TX_COUNT = 5413508
     TX_COUNT_HEIGHT = 1717382
     TX_PER_BLOCK = 3
-    IRC_PREFIX = "E_"
-    IRC_CHANNEL = "#electrum-rdd"
     RPC_PORT = 45443
 
 
