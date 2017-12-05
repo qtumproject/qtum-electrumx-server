@@ -378,4 +378,7 @@ class LegacyRPCDaemon(Daemon):
 
 
 class QtumDaemon(Daemon):
-    pass
+
+    async def callcontract(self, address, data, sender):
+        '''Return the result of the 'getnetworkinfo' RPC call.'''
+        return await self._send_single('callcontract', (address, data, sender))

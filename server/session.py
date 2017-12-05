@@ -391,7 +391,6 @@ class ElectrumX(SessionBase):
 
             return message
 
-
     def set_protocol_handlers(self, ptuple):
         protocol_version = '.'.join(str(part) for part in ptuple)
         if protocol_version == self.protocol_version:
@@ -444,6 +443,7 @@ class ElectrumX(SessionBase):
                 'blockchain.scripthash.subscribe': self.scripthash_subscribe,
                 'blockchain.transaction.broadcast': self.transaction_broadcast,
                 'blockchain.transaction.get': controller.transaction_get,
+                'blockchain.contract.call': controller.call_contract,
             })
 
         self.electrumx_handlers = handlers
