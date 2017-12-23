@@ -380,5 +380,20 @@ class LegacyRPCDaemon(Daemon):
 class QtumDaemon(Daemon):
 
     async def callcontract(self, address, data, sender):
-        '''Return the result of the 'getnetworkinfo' RPC call.'''
         return await self._send_single('callcontract', (address, data, sender))
+
+    async def searchlogs(self, from_block, to_block, addresses=None, topics=None, minconf=0):
+        if not addresses:
+            addresses = {'addresses': []}
+        else:
+            addresses = {'addresses': addresses}
+        if not topics:
+            topics = {'topics': []}
+        else:
+            topics = {'topics': topics}
+        eventlogs = await self._send_single('searchlogs', (from_block, to_block, addresses, topics, minconf))
+        # print('searchlogs', from_block, to_block, eventlogs)
+        return eventlogs
+
+    async def gettransactionreceipt(self, txid):
+        return await self._send_single('gettransactionreceipt', (txid, ))

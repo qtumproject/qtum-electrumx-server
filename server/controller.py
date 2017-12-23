@@ -879,5 +879,39 @@ class Controller(ServerBase):
             return None
         return self.coin.address_from_script(tx.outputs[index].pk_script)
 
-    async def call_contract(self, address, data, sender):
+    async def contract_call(self, address, data, sender):
         return await self.daemon_request('callcontract', address, data, sender)
+
+    async def transaction_get_receipt(self, txid):
+        return await self.daemon_request('gettransactionreceipt', txid)
+
+    async def token_get_info(self, token_address):
+        name = await self.contract_call(token_address, '06fdde03', None)
+        decimals = await self.contract_call(token_address, '313ce567', None)
+        total_supply = await self.contract_call(token_address, '18160ddd', None)
+        symbol = await self.contract_call(token_address, '95d89b41', None)
+        return {
+            'name': name,
+            'decimals': decimals,
+            'total_supply': total_supply,
+            'symbol': symbol
+        }
+
+    async def get_eventlogs(self, key):
+        def job():
+            # History DoS limit.  Each element of history is about 99
+            # bytes when encoded as JSON.  This limits resource usage
+            # on bloated history requests, and uses a smaller divisor
+            # so large requests are logged before refusing them.
+            limit = self.env.max_send // 97
+            return list(self.bp.get_eventlog(key, limit=limit))
+        eventlogs = await self.run_in_executor(job)
+        return eventlogs
+
+    async def hexaddress_get_eventlogs(self, hexaddress):
+        '''Return all the eventlogs of a hexaddress.'''
+        key = hexaddress.zfill(64).encode()
+        eventlogs = await self.get_eventlogs(key)
+        conf = [{'tx_hash': hash_to_str(tx_hash), 'height': height}
+                for tx_hash, height in eventlogs]
+        return conf

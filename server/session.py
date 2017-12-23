@@ -337,7 +337,7 @@ class ElectrumX(SessionBase):
         # that protocol version in unsupported.
         ptuple = util.protocol_version(protocol_version, version.PROTOCOL_MIN,
                                        version.PROTOCOL_MAX)
-        if ptuple is None or (ptuple >= (1, 2) and protocol_version is None):
+        if ptuple is None or (ptuple >= (1, 3) and protocol_version is None):
             self.log_info('unsupported protocol version request {}'
                           .format(protocol_version))
             raise RPCError('unsupported protocol version: {}'
@@ -411,7 +411,7 @@ class ElectrumX(SessionBase):
             'blockchain.relayfee': controller.relayfee,
             'blockchain.transaction.get_merkle':
             controller.transaction_get_merkle,
-            'server.add_peer': self.add_peer,
+            # 'server.add_peer': self.add_peer,
             'server.banner': self.banner,
             'server.donation_address': self.donation_address,
             'server.features': self.server_features,
@@ -447,7 +447,10 @@ class ElectrumX(SessionBase):
 
         if ptuple >= (1, 2):
             handlers.update({
-                'blockchain.contract.call': controller.call_contract,
+                'blockchain.contract.call': controller.contract_call,
+                'blochchain.transaction.get_receipt': controller.transaction_get_receipt,
+                'blockchain.token.get_info': controller.token_get_info,
+                'blockchain.hexaddress.get_eventlogs': controller.hexaddress_get_eventlogs,
             })
 
         self.electrumx_handlers = handlers

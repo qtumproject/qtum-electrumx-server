@@ -64,6 +64,9 @@ class DB(util.LoggedClass):
         self.max_hist_row_entries = 12500
 
         self.utxo_db = None
+        self.hist_db = None
+        self.eventlog_db = None
+
         self.open_dbs()
         self.clean_db()
 
@@ -110,10 +113,13 @@ class DB(util.LoggedClass):
                 log_reason('closing DB to re-open', for_sync)
                 self.utxo_db.close()
                 self.hist_db.close()
+                self.eventlog_db.close()
 
             # Open DB and metadata files.  Record some of its state.
             self.utxo_db = self.db_class('utxo', for_sync)
             self.hist_db = self.db_class('hist', for_sync)
+            self.eventlog_db = self.db_class('eventlog', for_sync)
+
             if self.utxo_db.is_new:
                 self.logger.info('created new database')
                 self.logger.info('creating metadata directory')
@@ -129,6 +135,7 @@ class DB(util.LoggedClass):
                 break
 
         self.read_history_state()
+        self.read_eventlog_state()
 
         self.logger.info('software version: {}'.format(VERSION))
         self.logger.info('DB version: {:d}'.format(self.db_version))
@@ -153,8 +160,14 @@ class DB(util.LoggedClass):
             # Might happen at end of compaction as both DBs cannot be
             # updated atomically
             self.utxo_flush_count = self.flush_count
+
         if self.flush_count > self.utxo_flush_count:
             self.clear_excess_history(self.utxo_flush_count)
+
+        if self.eventlog_flush_count > self.utxo_flush_count:
+            self.clear_excess_eventlog(self.utxo_flush_count)
+
+        # 删掉过时的utxo ？
         self.clear_excess_undo_info()
 
     def fs_update_header_offsets(self, offset_start, height_start, headers):
@@ -670,3 +683,71 @@ class DB(util.LoggedClass):
             self.logger.warning('cancelling in-progress history compaction')
             self.comp_flush_count = -1
             self.comp_cursor = -1
+
+    # - eventlog database
+
+    def read_eventlog_state(self):
+        state = self.eventlog_db.get(b'state')
+        if not state:
+            self.eventlog_flush_count = 0
+        else:
+            state = ast.literal_eval(state.decode())
+            if not isinstance(state, dict):
+                raise self.DBError('failed reading state from DB')
+            self.eventlog_flush_count = state.get('eventlog_flush_count', 0)
+
+    def write_eventlog_state(self, batch):
+        '''Write eventlog state to the batch.'''
+        state = {
+            'eventlog_flush_count': self.eventlog_flush_count,
+        }
+        batch.put(b'state', repr(state).encode())
+
+    def clear_excess_eventlog(self, flush_count):
+        self.logger.info('DB shut down uncleanly.  Scanning for '
+                         'excess eventlog flushes...')
+
+        keys = []
+        for key, hist in self.eventlog_db.iterator(prefix=b''):
+            flush_id, = unpack('>H', key[-2:])
+            if flush_id > flush_count:
+                keys.append(key)
+
+        self.logger.info('deleting {:,d} eventlog entries'.format(len(keys)))
+        self.eventlog_flush_count = flush_count
+        with self.eventlog_db.write_batch() as batch:
+            for key in keys:
+                batch.delete(key)
+            self.write_history_state(batch)
+
+        self.logger.info('deleted excess eventlog entries')
+
+    def flush_eventlog(self, eventlog):
+        self.eventlog_flush_count += 1
+        flush_id = pack('>H', self.flush_count)
+
+        with self.eventlog_db.write_batch() as batch:
+            for key in sorted(eventlog):
+                key = key + flush_id
+                batch.put(key, eventlog[key].tobytes())
+            self.write_eventlog_state(batch)
+
+    def get_eventlog_txnums(self, key, limit=1000):
+        limit = self._resolve_limit(limit)
+        for key, hist in self.eventlog_db.iterator(prefix=key):
+            a = array.array('I')
+            a.frombytes(hist)
+            for tx_num in a:
+                if limit == 0:
+                    return
+                yield tx_num
+                limit -= 1
+
+    def get_eventlog(self, key, limit=1000):
+        """
+        :param key: if you want to search for contract, add b'contract' as prefix
+        :param limit:
+        :return:
+        """
+        for tx_num in self.get_eventlog_txnums(key, limit):
+            yield self.fs_tx_hash(tx_num)
