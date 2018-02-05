@@ -392,7 +392,6 @@ class QtumDaemon(Daemon):
         else:
             topics = {'topics': topics}
         eventlogs = await self._send_single('searchlogs', (from_block, to_block, addresses, topics, minconf))
-        # print('searchlogs', from_block, to_block, eventlogs)
         return eventlogs
 
     async def gettransactionreceipt(self, txid):

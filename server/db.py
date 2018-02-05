@@ -706,7 +706,6 @@ class DB(util.LoggedClass):
     def clear_excess_eventlog(self, flush_count):
         self.logger.info('DB shut down uncleanly.  Scanning for '
                          'excess eventlog flushes...')
-
         keys = []
         for key, hist in self.eventlog_db.iterator(prefix=b''):
             flush_id, = unpack('>H', key[-2:])
@@ -718,19 +717,47 @@ class DB(util.LoggedClass):
         with self.eventlog_db.write_batch() as batch:
             for key in keys:
                 batch.delete(key)
-            self.write_history_state(batch)
+            self.write_eventlog_state(batch)
 
         self.logger.info('deleted excess eventlog entries')
 
     def flush_eventlog(self, eventlog):
         self.eventlog_flush_count += 1
-        flush_id = pack('>H', self.flush_count)
+        flush_id = pack('>H', self.eventlog_flush_count)
 
         with self.eventlog_db.write_batch() as batch:
             for key in sorted(eventlog):
                 key = key + flush_id
                 batch.put(key, eventlog[key].tobytes())
             self.write_eventlog_state(batch)
+
+    def backup_eventlogs(self, address_keys):
+        # Not certain this is needed, but it doesn't hurt
+        self.eventlog_flush_count += 1
+        nremoves = 0
+
+        with self.eventlog_db.write_batch() as batch:
+            for addr in sorted(address_keys):
+                deletes = []
+                puts = {}
+                for key, hist in self.eventlog_db.iterator(prefix=addr, reverse=True):
+                    a = array.array('I')
+                    a.frombytes(hist)
+                    # Remove all eventlog entries >= self.tx_count
+                    idx = bisect_left(a, self.tx_count)
+                    nremoves += len(a) - idx
+                    if idx > 0:
+                        puts[key] = a[:idx].tobytes()
+                        break
+                    deletes.append(key)
+
+                for key in deletes:
+                    batch.delete(key)
+                for key, value in puts.items():
+                    batch.put(key, value)
+            self.write_eventlog_state(batch)
+
+        return nremoves
 
     def get_eventlog_txnums(self, key, limit=1000):
         limit = self._resolve_limit(limit)

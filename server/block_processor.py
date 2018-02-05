@@ -181,6 +181,7 @@ class BlockProcessor(server.db.DB):
         # eventlogs
         self.eventlogs = defaultdict(partial(array.array, 'I'))
         self.eventlogs_size = 0
+        self.eventlog_touched = set()
 
         self.prefetcher = Prefetcher(self)
 
@@ -292,18 +293,14 @@ class BlockProcessor(server.db.DB):
             self.logger.info('faking a reorg of {:,d} blocks'.format(count))
         await self.controller.run_in_executor(self.flush, True)
 
-        hashes = await self.reorg_hashes(count)
+        hashes, start, count = await self.reorg_hashes(count)
         # Reverse and convert to hex strings.
         hashes = [hash_to_str(hash) for hash in reversed(hashes)]
+        eventlogs = await self.daemon.searchlogs(start, start + count - 1)
+        eventlog_dict = self.eventlogs_to_dict(eventlogs)
         for hex_hashes in chunks(hashes, 50):
             blocks = await self.daemon.raw_blocks(hex_hashes)
-            self.daemon.searchlogs()
-            # 3.备份区块
-            # 会调用 backup_flush
-            # 看来这里是关键了
-            await self.controller.run_in_executor(self.backup_blocks, blocks)
-
-        # 修正高度
+            await self.controller.run_in_executor(self.backup_blocks, blocks, eventlog_dict)
         await self.prefetcher.reset_height()
 
     async def reorg_hashes(self, count):
@@ -343,7 +340,7 @@ class BlockProcessor(server.db.DB):
                          'heights {:,d}-{:,d}'
                          .format(count, s, start, start + count - 1))
 
-        return self.fs_block_hashes(start, count)
+        return self.fs_block_hashes(start, count), start, count
 
     def flush_state(self, batch):
         '''Flush chain state to the batch.'''
@@ -359,6 +356,7 @@ class BlockProcessor(server.db.DB):
         assert self.height == self.fs_height == self.db_height
         assert not self.undo_infos
         assert not self.history
+        assert not self.eventlogs
         assert not self.utxo_cache
         assert not self.db_deletes
 
@@ -382,7 +380,6 @@ class BlockProcessor(server.db.DB):
                              .format(fs_end - flush_start))
 
         # History next - it's fast and frees memory
-        # print('flush history', self.history)
         self.flush_history(self.history)
         if self.utxo_db.for_sync:
             self.logger.info('flushed history in {:.1f}s for {:,d} addrs'
@@ -457,6 +454,7 @@ class BlockProcessor(server.db.DB):
         '''
         assert self.height < self.db_height
         assert not self.history
+        assert not self.eventlogs
 
         flush_start = time.time()
 
@@ -469,9 +467,14 @@ class BlockProcessor(server.db.DB):
         # Backup history.  self.touched can include other addresses
         # which is harmless, but remove None.
         self.touched.discard(None)
-        nremoves = self.backup_history(self.touched) # 这里面删了
+        nremoves = self.backup_history(self.touched)
         self.logger.info('backing up removed {:,d} history entries'
                          .format(nremoves))
+
+        self.eventlog_touched.discard(None)
+        n_eventlogs = self.backup_eventlogs(self.eventlog_touched)
+        self.logger.info('backing up removed {:,d} eventlog entries'
+                         .format(n_eventlogs))
 
         with self.utxo_db.write_batch() as batch:
             # Flush state last as it reads the wall time.
@@ -518,7 +521,7 @@ class BlockProcessor(server.db.DB):
         '''
         min_height = self.min_undo_height(self.daemon.cached_height())
         height = self.height
-        eventlog_dict = self.advance_eventlogs(eventlogs)
+        eventlog_dict = self.eventlogs_to_dict(eventlogs)
 
         for block in blocks:
             height += 1
@@ -557,10 +560,10 @@ class BlockProcessor(server.db.DB):
 
         for tx, tx_hash in txs:
             # eventlog
-            logs = eventlog_dict.get(hash_to_hex_str(tx_hash), [])
-            for key in logs:
+            addresses = eventlog_dict.get(hash_to_hex_str(tx_hash), [])
+            for key in addresses:
                 self.eventlogs[key].append(tx_num)
-            self.eventlogs_size += len(logs)
+            self.eventlogs_size += len(addresses)
 
             hashXs = set()
             add_hashX = hashXs.add
@@ -594,12 +597,12 @@ class BlockProcessor(server.db.DB):
 
         return undo_info
 
-    def advance_eventlogs(self, eventlogs):
+    @staticmethod
+    def eventlogs_to_dict(eventlogs):
         '''
-        key: txid
-        value: hashx set (contract_addr, sender_addr, receiver_addr)
+        key: string txid
+        value: bytes[] addresses
         '''
-
         eventlog_dict = defaultdict(set)
         for eventlog in eventlogs:
             txid = eventlog.get('transactionHash')
@@ -610,15 +613,20 @@ class BlockProcessor(server.db.DB):
                 if not isinstance(log, dict):
                     print('log not dict')
                     continue
-                for topic in log.get('topics', []):
-                    if not isinstance(topic, list):
+                for topics in log.get('topics', []):
+                    if not isinstance(topics, list):
                         print('topic not list')
                         continue
-                    eventlog_dict[txid].update(map(str.encode, topic))
+                    for topic in topics:
+                        # only need address type
+                        if len(topic) == 64 \
+                                and topic.startswith('0'*24) \
+                                and not topic.startswith('0'*48):
+                            eventlog_dict[txid].add(topic.encode())
             eventlog_dict[txid].add(b'contract' + contract_addr.encode())
         return eventlog_dict
 
-    def backup_blocks(self, raw_blocks):
+    def backup_blocks(self, raw_blocks, eventlog_dict):
         '''Backup the raw blocks and flush.
 
         The blocks should be in order of decreasing height, starting at.
@@ -626,8 +634,12 @@ class BlockProcessor(server.db.DB):
         '''
         self.assert_flushed()
         assert self.height >= len(raw_blocks)
-
         coin = self.coin
+
+        for txid, keys in eventlog_dict.items():
+            for key in keys:
+                self.eventlog_touched.add(key)
+
         for raw_block in raw_blocks:
             # Check and update self.tip
             block = coin.block(raw_block, self.height)
@@ -637,7 +649,7 @@ class BlockProcessor(server.db.DB):
                                  .format(hash_to_str(header_hash),
                                          hash_to_str(self.tip), self.height))
             self.tip = coin.header_prevhash(block.header)
-            self.backup_txs(block.transactions) # 保存到了self.touched里面了
+            self.backup_txs(block.transactions)
             self.height -= 1
             self.tx_counts.pop()
 
