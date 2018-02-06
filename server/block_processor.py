@@ -606,8 +606,7 @@ class BlockProcessor(server.db.DB):
         eventlog_dict = defaultdict(set)
         for eventlog in eventlogs:
             txid = eventlog.get('transactionHash')
-            contract_addr = eventlog.get('contractAddress')
-            if not txid or not contract_addr:
+            if not txid:
                 continue
             for log in eventlog.get('log', []):
                 if not isinstance(log, dict):
@@ -619,7 +618,8 @@ class BlockProcessor(server.db.DB):
                             and topic.startswith('0'*24) \
                             and not topic.startswith('0'*48):
                         eventlog_dict[txid].add(topic.encode())
-            eventlog_dict[txid].add(b'contract' + contract_addr.encode())
+                contract_addr = log.get('address')
+                eventlog_dict[txid].add(b'contract' + contract_addr.encode())
         return eventlog_dict
 
     def backup_blocks(self, raw_blocks, eventlog_dict):
