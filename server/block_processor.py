@@ -613,16 +613,12 @@ class BlockProcessor(server.db.DB):
                 if not isinstance(log, dict):
                     print('log not dict')
                     continue
-                for topics in log.get('topics', []):
-                    if not isinstance(topics, list):
-                        print('topic not list')
-                        continue
-                    for topic in topics:
-                        # only need address type
-                        if len(topic) == 64 \
-                                and topic.startswith('0'*24) \
-                                and not topic.startswith('0'*48):
-                            eventlog_dict[txid].add(topic.encode())
+                for topic in log.get('topics', []):
+                    # only need address type
+                    if len(topic) == 64 \
+                            and topic.startswith('0'*24) \
+                            and not topic.startswith('0'*48):
+                        eventlog_dict[txid].add(topic.encode())
             eventlog_dict[txid].add(b'contract' + contract_addr.encode())
         return eventlog_dict
 
