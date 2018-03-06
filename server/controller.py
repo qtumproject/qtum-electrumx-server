@@ -878,8 +878,8 @@ class Controller(ServerBase):
             return None
         return self.coin.address_from_script(tx.outputs[index].pk_script)
 
-    async def contract_call(self, address, data):
-        return await self.daemon_request('callcontract', address, data, None)
+    async def contract_call(self, address, data, sender=''):
+        return await self.daemon_request('callcontract', address, data, sender)
 
     async def transaction_get_receipt(self, txid):
         return await self.daemon_request('gettransactionreceipt', txid)
