@@ -322,6 +322,8 @@ def protocol_version(client_req, server_min, server_max):
 
 def parse_call_output(result, _type):
     result = result.get('executionResult', {}).get('output', '')
+    if not result:
+        return ''
     if _type == str:
         length = int(result[64:128], 16)
         result = binascii.a2b_hex(result[128: 128+length*2]).decode()
