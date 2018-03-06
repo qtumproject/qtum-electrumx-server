@@ -931,9 +931,9 @@ class Controller(ServerBase):
         eventlogs = await self.run_in_executor(job)
         return eventlogs
 
-    async def hexaddress_get_eventlogs(self, hexaddress):
+    async def hash160_get_eventlogs(self, hash160):
         '''Return all the eventlogs of a hexaddress.'''
-        key = hexaddress.zfill(64).encode()
+        key = hash160.zfill(64).encode()
         eventlogs = await self.get_eventlogs(key)
         conf = [{'tx_hash': hash_to_str(tx_hash), 'height': height}
                 for tx_hash, height in eventlogs]

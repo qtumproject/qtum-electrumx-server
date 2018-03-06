@@ -337,7 +337,8 @@ class ElectrumX(SessionBase):
         # that protocol version in unsupported.
         ptuple = util.protocol_version(protocol_version, version.PROTOCOL_MIN,
                                        version.PROTOCOL_MAX)
-        if ptuple is None or (ptuple >= (1, 3) and protocol_version is None):
+        # PROTOCOL_MAX
+        if ptuple is None or (ptuple > (1, 3) and protocol_version is None):
             self.log_info('unsupported protocol version request {}'
                           .format(protocol_version))
             raise RPCError('unsupported protocol version: {}'
@@ -444,13 +445,14 @@ class ElectrumX(SessionBase):
                 'blockchain.transaction.broadcast': self.transaction_broadcast,
                 'blockchain.transaction.get': controller.transaction_get,
             })
-
-        if ptuple >= (1, 2):
+        # PROTOCOL_MAX
+        if ptuple >= (1, 3):
             handlers.update({
-                'blockchain.contract.call': controller.contract_call,
                 'blochchain.transaction.get_receipt': controller.transaction_get_receipt,
+                'blockchain.contract.call': controller.contract_call,
                 'blockchain.token.get_info': controller.token_get_info,
-                'blockchain.hexaddress.get_eventlogs': controller.hexaddress_get_eventlogs,
+                # 'blockchain.hash160.subscribe': '',
+                'blockchain.hash160.get_eventlogs': controller.hash160_get_eventlogs,
             })
 
         self.electrumx_handlers = handlers
