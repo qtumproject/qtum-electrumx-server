@@ -35,6 +35,7 @@ import re
 import sys
 from collections import Container, Mapping
 from struct import pack, Struct
+import binascii
 
 unpack_int32_from = Struct('<i').unpack_from
 unpack_int64_from = Struct('<q').unpack_from
@@ -316,4 +317,14 @@ def protocol_version(client_req, server_min, server_max):
     if result < max(client_min, server_min) or result == (0, ):
         result = None
 
+    return result
+
+
+def parse_call_output(result, _type):
+    result = result.get('executionResult', {}).get('output', '')
+    if _type == str:
+        length = int(result[64:128], 16)
+        result = binascii.a2b_hex(result[128: 128+length*2]).decode()
+    elif _type == int:
+        result = int(result, 16)
     return result

@@ -908,16 +908,17 @@ class Controller(ServerBase):
     #         return wrapped
     #
     # @MyCache(256)
+
     async def token_get_info(self, token_address):
         name = await self.contract_call(token_address, '06fdde03')
         decimals = await self.contract_call(token_address, '313ce567')
         total_supply = await self.contract_call(token_address, '18160ddd')
         symbol = await self.contract_call(token_address, '95d89b41')
         return {
-            'name': name,
-            'decimals': decimals,
-            'total_supply': total_supply,
-            'symbol': symbol
+            'name': util.parse_call_output(name, str),
+            'decimals': util.parse_call_output(decimals, int),
+            'total_supply': util.parse_call_output(total_supply, int),
+            'symbol': util.parse_call_output(symbol, str)
         }
 
     async def get_eventlogs(self, key):
