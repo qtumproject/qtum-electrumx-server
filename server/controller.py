@@ -884,30 +884,30 @@ class Controller(ServerBase):
     async def transaction_get_receipt(self, txid):
         return await self.daemon_request('gettransactionreceipt', txid)
 
-    class MyCache(object):
-        def __init__(self, maxcount):
-            self.count = 0
-            self.maxcount = maxcount
-            self.cache = {}
-
-        def __call__(self, func):
-
-            @wraps(func)
-            def wrapped(*args):
-                if self.count > self.maxcount:
-                    self.cache = {}
-                    self.count = 0
-                    result = self.cache[args] = func(*args)
-                else:
-                    try:
-                        result = self.cache[args]
-                        self.count += 1
-                    except KeyError:
-                        result = self.cache[args] = func(*args)
-                return result
-            return wrapped
-
-    @MyCache(256)
+    # class MyCache(object):
+    #     def __init__(self, maxcount):
+    #         self.count = 0
+    #         self.maxcount = maxcount
+    #         self.cache = {}
+    #
+    #     def __call__(self, func):
+    #
+    #         @wraps(func)
+    #         def wrapped(*args):
+    #             if self.count > self.maxcount:
+    #                 self.cache = {}
+    #                 self.count = 0
+    #                 result = self.cache[args] = func(*args)
+    #             else:
+    #                 try:
+    #                     result = self.cache[args]
+    #                     self.count += 1
+    #                 except KeyError:
+    #                     result = self.cache[args] = func(*args)
+    #             return result
+    #         return wrapped
+    #
+    # @MyCache(256)
     async def token_get_info(self, token_address):
         name = await self.contract_call(token_address, '06fdde03', None)
         decimals = await self.contract_call(token_address, '313ce567', None)
