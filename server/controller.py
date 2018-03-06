@@ -878,8 +878,9 @@ class Controller(ServerBase):
             return None
         return self.coin.address_from_script(tx.outputs[index].pk_script)
 
-    async def contract_call(self, address, data, sender=''):
-        return await self.daemon_request('callcontract', address, data, sender)
+    async def contract_call(self, address, data, sender='', result_type=None):
+        result = await self.daemon_request('callcontract', address, data, sender)
+        return util.parse_call_output(result, result_type)
 
     async def transaction_get_receipt(self, txid):
         return await self.daemon_request('gettransactionreceipt', txid)
@@ -910,15 +911,15 @@ class Controller(ServerBase):
     # @MyCache(256)
 
     async def token_get_info(self, token_address):
-        name = await self.contract_call(token_address, '06fdde03')
-        decimals = await self.contract_call(token_address, '313ce567')
-        total_supply = await self.contract_call(token_address, '18160ddd')
-        symbol = await self.contract_call(token_address, '95d89b41')
+        name = await self.contract_call(token_address, '06fdde03', result_type=str)
+        decimals = await self.contract_call(token_address, '313ce567', result_type=int)
+        total_supply = await self.contract_call(token_address, '18160ddd', result_type=int)
+        symbol = await self.contract_call(token_address, '95d89b41', result_type=str)
         return {
-            'name': util.parse_call_output(name, str),
-            'decimals': util.parse_call_output(decimals, int),
-            'total_supply': util.parse_call_output(total_supply, int),
-            'symbol': util.parse_call_output(symbol, str)
+            'name': name,
+            'decimals': decimals,
+            'total_supply': total_supply,
+            'symbol': symbol
         }
 
     async def get_eventlogs(self, key):
