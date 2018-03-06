@@ -878,8 +878,8 @@ class Controller(ServerBase):
             return None
         return self.coin.address_from_script(tx.outputs[index].pk_script)
 
-    async def contract_call(self, address, data, sender):
-        return await self.daemon_request('callcontract', address, data, sender)
+    async def contract_call(self, address, data):
+        return await self.daemon_request('callcontract', address, data)
 
     async def transaction_get_receipt(self, txid):
         return await self.daemon_request('gettransactionreceipt', txid)
@@ -909,10 +909,10 @@ class Controller(ServerBase):
     #
     # @MyCache(256)
     async def token_get_info(self, token_address):
-        name = await self.contract_call(token_address, '06fdde03', None)
-        decimals = await self.contract_call(token_address, '313ce567', None)
-        total_supply = await self.contract_call(token_address, '18160ddd', None)
-        symbol = await self.contract_call(token_address, '95d89b41', None)
+        name = await self.contract_call(token_address, '06fdde03')
+        decimals = await self.contract_call(token_address, '313ce567')
+        total_supply = await self.contract_call(token_address, '18160ddd')
+        symbol = await self.contract_call(token_address, '95d89b41')
         return {
             'name': name,
             'decimals': decimals,
