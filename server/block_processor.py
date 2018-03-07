@@ -258,7 +258,7 @@ class BlockProcessor(server.db.DB):
                 self.logger.info('processed {:,d} block{} in {:.1f}s'
                                  .format(len(blocks), s,
                                          time.time() - start))
-                self.controller.mempool.on_new_block(self.touched)
+                self.controller.mempool.on_new_block(self.touched, self.eventlog_touched)
             self.touched.clear()
         elif hprevs[0] != chain[0]:
             await self.reorg_chain()
@@ -601,7 +601,7 @@ class BlockProcessor(server.db.DB):
     def eventlogs_to_dict(eventlogs):
         '''
         key: string txid
-        value: bytes[] addresses
+        value: bytes[] , hash160+contarct_addr
         '''
         eventlog_dict = defaultdict(set)
         for eventlog in eventlogs:
@@ -612,14 +612,17 @@ class BlockProcessor(server.db.DB):
                 if not isinstance(log, dict):
                     print('log not dict')
                     continue
-                for topic in log.get('topics', []):
-                    # only need address type
-                    if len(topic) == 64 \
-                            and topic.startswith('0'*24) \
-                            and not topic.startswith('0'*48):
-                        eventlog_dict[txid].add(topic.encode())
                 contract_addr = log.get('address')
-                eventlog_dict[txid].add(b'contract' + contract_addr.encode())
+                if not contract_addr:
+                    continue
+                for topic_data in log.get('topics', []):
+                    # only need address type
+                    if len(topic_data) == 64 \
+                            and topic_data.startswith('0'*24) \
+                            and not topic_data.startswith('0'*48):
+                        hash160 = topic_data[-40:]
+                        key = hash160 + contract_addr
+                        eventlog_dict[txid].add(key.encode())
         return eventlog_dict
 
     def backup_blocks(self, raw_blocks, eventlog_dict):

@@ -270,7 +270,7 @@ class Controller(ServerBase):
             sslc.load_cert_chain(env.ssl_certfile, keyfile=env.ssl_keyfile)
             await self.start_server('SSL', host, env.ssl_port, ssl=sslc)
 
-    def notify_sessions(self, touched):
+    def notify_sessions(self, touched, eventlog_touched=None):
         '''Notify sessions about height changes and touched addresses.'''
         # Invalidate caches
         hc = self.history_cache
@@ -287,9 +287,9 @@ class Controller(ServerBase):
         for session in self.sessions:
             if isinstance(session, LocalRPC):
                 continue
-            session_touched = session.notify(height, touched)
+            session_touched, session_eventlog_touched = session.notify(height, touched, eventlog_touched)
             if session_touched is not None:
-                self.ensure_future(session.notify_async(session_touched))
+                self.ensure_future(session.notify_async(session_touched, session_eventlog_touched))
 
     def notify_peers(self, updates):
         '''Notify of peer updates.'''
@@ -933,9 +933,8 @@ class Controller(ServerBase):
         eventlogs = await self.run_in_executor(job)
         return eventlogs
 
-    async def hash160_get_eventlogs(self, hash160):
-        '''Return all the eventlogs of a hexaddress.'''
-        key = hash160.zfill(64).encode()
+    async def hash160_contract_get_eventlogs(self, hash160, contract_addr):
+        key = '{}{}'.format(hash160, contract_addr).encode()
         eventlogs = await self.get_eventlogs(key)
         conf = [{'tx_hash': hash_to_str(tx_hash), 'height': height}
                 for tx_hash, height in eventlogs]

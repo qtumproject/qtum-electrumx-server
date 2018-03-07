@@ -177,7 +177,7 @@ class MemPool(util.LoggedClass):
 
         return process
 
-    def on_new_block(self, touched):
+    def on_new_block(self, touched, eventlog_touched):
         '''Called after processing one or more new blocks.
         Touched is a set of hashXs touched by the transactions in the
         block.  Caller must be aware it is modified by this function.
@@ -185,7 +185,7 @@ class MemPool(util.LoggedClass):
         # Minor race condition here with mempool processor thread
         touched.update(self.touched)
         self.touched.clear()
-        self.controller.notify_sessions(touched)
+        self.controller.notify_sessions(touched, eventlog_touched)
 
     def processing_new_block(self):
         '''Return True if we're processing a new block.'''

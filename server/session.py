@@ -111,6 +111,7 @@ class ElectrumX(SessionBase):
         self.max_send = self.env.max_send
         self.max_subs = self.env.max_session_subs
         self.hashX_subs = {}
+        self.contract_subs = {}  # hash160+contarct: hash160
         self.mempool_statuses = {}
         self.chunk_indices = []
         self.protocol_version = None
@@ -119,13 +120,20 @@ class ElectrumX(SessionBase):
     def sub_count(self):
         return len(self.hashX_subs)
 
-    async def notify_async(self, our_touched):
+    async def notify_async(self, our_touched, our_eventlog_touched):
         changed = {}
 
         for hashX in our_touched:
             alias = self.hashX_subs[hashX]
             status = await self.address_status(hashX)
             changed[alias] = status
+
+        for key in our_eventlog_touched:
+            hash160 = self.contract_subs[key]
+            contarct_addr = key.decode()[-40:]
+            status = await self.hash160_contract_status(hash160, contarct_addr)
+            method = 'blockchain.hash160.contract.subscribe'
+            self.send_notification(method, (hash160, status))
 
         # Check mempool hashXs - the status is a function of the
         # confirmed state of other transactions.  Note: we cannot
@@ -149,7 +157,7 @@ class ElectrumX(SessionBase):
             self.log_info('notified of {:,d} address{}'
                           .format(len(changed), es))
 
-    def notify(self, height, touched):
+    def notify(self, height, touched, eventlog_touched):
         '''Notify the client about changes to touched addresses (from mempool
         updates or new blocks) and height.
         Return the set of addresses the session needs to be
@@ -168,10 +176,14 @@ class ElectrumX(SessionBase):
                 self.send_notification('blockchain.numblocks.subscribe', args)
 
         our_touched = touched.intersection(self.hashX_subs)
-        if our_touched or (height_changed and self.mempool_statuses):
-            return our_touched
+        if eventlog_touched:
+            our_eventlog_touched = eventlog_touched.intersection(self.contract_subs)
+        else:
+            our_eventlog_touched = set()
 
-        return None
+        if our_touched or (height_changed and self.mempool_statuses) or our_eventlog_touched:
+            return our_touched, our_eventlog_touched
+        return None, None
 
     def height(self):
         '''Return the current flushed database height.'''
@@ -249,6 +261,22 @@ class ElectrumX(SessionBase):
         hashX = self.controller.scripthash_to_hashX(scripthash)
         return await self.hashX_subscribe(hashX, scripthash)
 
+    async def hash160_contract_status(self, hash160, contract_addr):
+        status = self.controller.hash160_contract_get_eventlogs(hash160, contract_addr)
+        if status:
+            status = sha256(status.encode()).hex()
+        else:
+            status = None
+        return status
+
+    async def hash160_contract_subscribe(self, hash160, contract_addr):
+        if len(self.contract_subs) >= self.max_subs:
+            raise RPCError('your contract subscription limit {:,d} reached'
+                           .format(self.max_subs))
+        key = '{}{}'.format(hash160, contract_addr).encode()
+        self.contract_subs[key] = hash160
+        return await self.hash160_contract_status(hash160, contract_addr)
+
     def server_features(self):
         '''Returns a dictionary of server features.'''
         return self.controller.peer_mgr.my_clearnet_peer().features
@@ -301,7 +329,7 @@ class ElectrumX(SessionBase):
 
     async def banner(self):
         '''Return the server banner text.'''
-        banner = 'Welcome to Electrum!'
+        banner = 'Welcome to Qtum Electrum!'
 
         if self.is_tor():
             banner_file = self.env.tor_banner_file
@@ -350,7 +378,7 @@ class ElectrumX(SessionBase):
         if ptuple < (1, 1):
             return version.VERSION
         else:
-            return (version.VERSION, self.protocol_version)
+            return version.VERSION, self.protocol_version
 
     async def transaction_broadcast(self, raw_tx):
         '''Broadcast a raw transaction to the network.
@@ -451,10 +479,9 @@ class ElectrumX(SessionBase):
                 'blochchain.transaction.get_receipt': controller.transaction_get_receipt,
                 'blockchain.contract.call': controller.contract_call,
                 'blockchain.token.get_info': controller.token_get_info,
-                # 'blockchain.hash160.subscribe': '',
-                'blockchain.hash160.get_eventlogs': controller.hash160_get_eventlogs,
+                'blockchain.hash160.contract.get_eventlogs': controller.hash160_contract_get_eventlogs,
+                'blockchain.hash160.contract.subscribe': self.hash160_contract_subscribe,
             })
-
         self.electrumx_handlers = handlers
 
     def request_handler(self, method):
