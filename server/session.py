@@ -262,7 +262,7 @@ class ElectrumX(SessionBase):
         return await self.hashX_subscribe(hashX, scripthash)
 
     async def hash160_contract_status(self, hash160, contract_addr):
-        status = self.controller.hash160_contract_get_eventlogs(hash160, contract_addr)
+        status = await self.controller.hash160_contract_get_eventlogs(hash160, contract_addr)
         if status:
             status = sha256(status.encode()).hex()
         else:
