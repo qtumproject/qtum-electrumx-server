@@ -726,9 +726,9 @@ class DB(util.LoggedClass):
         flush_id = pack('>H', self.eventlog_flush_count)
 
         with self.eventlog_db.write_batch() as batch:
-            for key in sorted(eventlog):
-                key = key + flush_id
-                batch.put(key, eventlog[key].tobytes())
+            for hashY in sorted(eventlog):
+                key = hashY + flush_id
+                batch.put(key, eventlog[hashY].tobytes())
             self.write_eventlog_state(batch)
 
     def backup_eventlogs(self, address_keys):

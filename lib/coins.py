@@ -38,7 +38,7 @@ from hashlib import sha256
 import binascii
 
 import lib.util as util
-from lib.hash import Base58, hash160, double_sha256, hash_to_str
+from lib.hash import Base58, hash160, double_sha256, hash_to_str, hex_str_to_hash
 from lib.script import ScriptPubKey, OpCodes
 from lib.tx import Deserializer, DeserializerSegWit, DeserializerAuxPow, \
     DeserializerZcash, DeserializerTxTime, DeserializerReddcoin, DeserializerQtum
@@ -165,6 +165,11 @@ class Coin(object):
     def address_to_hashX(cls, address):
         '''Return a hashX given a coin address.'''
         return cls.hashX_from_script(cls.pay_to_address_script(address))
+
+    @classmethod
+    def hash160_contract_to_hashY(cls, hash160, contract_addr):
+        bin_hash = hex_str_to_hash(hash160+contract_addr)
+        return bin_hash[:cls.HASHX_LEN]
 
     @classmethod
     def P2PKH_address_from_hash160(cls, hash160):

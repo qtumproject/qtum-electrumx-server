@@ -922,20 +922,20 @@ class Controller(ServerBase):
             'symbol': symbol
         }
 
-    async def get_eventlogs(self, key):
+    async def get_eventlogs(self, hashY):
         def job():
             # History DoS limit.  Each element of history is about 99
             # bytes when encoded as JSON.  This limits resource usage
             # on bloated history requests, and uses a smaller divisor
             # so large requests are logged before refusing them.
             limit = self.env.max_send // 97
-            return list(self.bp.get_eventlog(key, limit=limit))
+            return list(self.bp.get_eventlog(hashY, limit=limit))
         eventlogs = await self.run_in_executor(job)
         return eventlogs
 
     async def hash160_contract_get_eventlogs(self, hash160, contract_addr):
-        key = '{}{}'.format(hash160, contract_addr).encode()
-        eventlogs = await self.get_eventlogs(key)
+        hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
+        eventlogs = await self.get_eventlogs(hashY)
         conf = [{'tx_hash': hash_to_str(tx_hash), 'height': height}
                 for tx_hash, height in eventlogs]
         return conf

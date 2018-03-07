@@ -260,6 +260,7 @@ class BlockProcessor(server.db.DB):
                                          time.time() - start))
                 self.controller.mempool.on_new_block(self.touched, self.eventlog_touched)
             self.touched.clear()
+            self.eventlog_touched.clear()
         elif hprevs[0] != chain[0]:
             await self.reorg_chain()
         else:
@@ -558,16 +559,21 @@ class BlockProcessor(server.db.DB):
         undo_info_append = undo_info.append
         touched = self.touched
 
-        for tx, tx_hash in txs:
-            # eventlog
-            addresses = eventlog_dict.get(hash_to_hex_str(tx_hash), [])
-            for key in addresses:
-                self.eventlogs[key].append(tx_num)
-            self.eventlogs_size += len(addresses)
+        eventlogs = self.eventlogs
+        eventlog_touched = self.eventlog_touched
+        eventlogs_size = self.eventlogs_size
 
+        for tx, tx_hash in txs:
             hashXs = set()
             add_hashX = hashXs.add
             tx_numb = s_pack('<I', tx_num)
+
+            # eventlog
+            hashYs = eventlog_dict.get(hash_to_hex_str(tx_hash), [])
+            for hashY in hashYs:
+                eventlogs[hashY].append(tx_num)
+                eventlog_touched.add(hashY)
+            eventlogs_size += len(hashYs)
 
             # Spend the inputs
             if not tx.is_coinbase:
@@ -594,15 +600,16 @@ class BlockProcessor(server.db.DB):
         self.tx_count = tx_num
         self.tx_counts.append(tx_num)
         self.history_size = history_size
+        self.eventlogs_size = eventlogs_size
 
         return undo_info
 
-    @staticmethod
-    def eventlogs_to_dict(eventlogs):
+    def eventlogs_to_dict(self, eventlogs):
         '''
         key: string txid
-        value: bytes[] , hash160+contarct_addr
+        value: bytes[] , hashY
         '''
+        hash160_contract_to_hashY = self.coin.hash160_contract_to_hashY
         eventlog_dict = defaultdict(set)
         for eventlog in eventlogs:
             txid = eventlog.get('transactionHash')
@@ -621,8 +628,8 @@ class BlockProcessor(server.db.DB):
                             and topic_data.startswith('0'*24) \
                             and not topic_data.startswith('0'*48):
                         hash160 = topic_data[-40:]
-                        key = hash160 + contract_addr
-                        eventlog_dict[txid].add(key.encode())
+                        hashY = hash160_contract_to_hashY(hash160, contract_addr)
+                        eventlog_dict[txid].add(hashY)
         return eventlog_dict
 
     def backup_blocks(self, raw_blocks, eventlog_dict):

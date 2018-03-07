@@ -111,7 +111,7 @@ class ElectrumX(SessionBase):
         self.max_send = self.env.max_send
         self.max_subs = self.env.max_session_subs
         self.hashX_subs = {}
-        self.contract_subs = {}  # hash160+contarct: hash160
+        self.contract_subs = {}  # hashY: (hash160, contarct)
         self.mempool_statuses = {}
         self.chunk_indices = []
         self.protocol_version = None
@@ -128,12 +128,10 @@ class ElectrumX(SessionBase):
             status = await self.address_status(hashX)
             changed[alias] = status
 
-        for key in our_eventlog_touched:
-            hash160 = self.contract_subs[key]
-            contarct_addr = key.decode()[-40:]
-            status = await self.hash160_contract_status(hash160, contarct_addr)
+        for hashY in our_eventlog_touched:
+            hash160, contarct_addr = self.contract_subs[hashY]
             method = 'blockchain.hash160.contract.subscribe'
-            self.send_notification(method, (hash160, status))
+            self.send_notification(method, (hash160, contarct_addr))
 
         # Check mempool hashXs - the status is a function of the
         # confirmed state of other transactions.  Note: we cannot
@@ -273,8 +271,8 @@ class ElectrumX(SessionBase):
         if len(self.contract_subs) >= self.max_subs:
             raise RPCError('your contract subscription limit {:,d} reached'
                            .format(self.max_subs))
-        key = '{}{}'.format(hash160, contract_addr).encode()
-        self.contract_subs[key] = hash160
+        hashY = self.controller.coin.hash160_contract_to_hashY(hash160, contract_addr)
+        self.contract_subs[hashY] = (hash160, contract_addr)
         return await self.hash160_contract_status(hash160, contract_addr)
 
     def server_features(self):
