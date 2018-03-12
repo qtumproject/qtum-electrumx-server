@@ -168,8 +168,10 @@ class Coin(object):
 
     @classmethod
     def hash160_contract_to_hashY(cls, hash160, contract_addr):
-        bin_hash = hex_str_to_hash(hash160+contract_addr)
-        return bin_hash[:cls.HASHX_LEN]
+        m = sha256()
+        m.update(hash160.encode())
+        m.update(contract_addr.encode())
+        return m.digest()
 
     @classmethod
     def P2PKH_address_from_hash160(cls, hash160):

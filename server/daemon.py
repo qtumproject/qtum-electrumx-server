@@ -383,6 +383,7 @@ class QtumDaemon(Daemon):
         return await self._send_single('callcontract', (address, data, sender))
 
     async def searchlogs(self, from_block, to_block, addresses=None, topics=None, minconf=0):
+        self.logger.info('searchlogs', from_block, to_block)
         if not addresses:
             addresses = {'addresses': []}
         else:
