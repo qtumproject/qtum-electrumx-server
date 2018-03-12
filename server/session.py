@@ -122,16 +122,17 @@ class ElectrumX(SessionBase):
 
     async def notify_async(self, our_touched, our_eventlog_touched):
         changed = {}
+        if our_touched:
+            for hashX in our_touched:
+                alias = self.hashX_subs[hashX]
+                status = await self.address_status(hashX)
+                changed[alias] = status
 
-        for hashX in our_touched:
-            alias = self.hashX_subs[hashX]
-            status = await self.address_status(hashX)
-            changed[alias] = status
-
-        for hashY in our_eventlog_touched:
-            hash160, contarct_addr = self.contract_subs[hashY]
-            method = 'blockchain.hash160.contract.subscribe'
-            self.send_notification(method, (hash160, contarct_addr))
+        if our_eventlog_touched:
+            for hashY in our_eventlog_touched:
+                hash160, contarct_addr = self.contract_subs[hashY]
+                method = 'blockchain.hash160.contract.subscribe'
+                self.send_notification(method, (hash160, contarct_addr))
 
         # Check mempool hashXs - the status is a function of the
         # confirmed state of other transactions.  Note: we cannot
@@ -174,6 +175,7 @@ class ElectrumX(SessionBase):
                 self.send_notification('blockchain.numblocks.subscribe', args)
 
         our_touched = touched.intersection(self.hashX_subs)
+
         if eventlog_touched:
             our_eventlog_touched = eventlog_touched.intersection(self.contract_subs)
         else:

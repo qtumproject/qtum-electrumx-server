@@ -288,7 +288,7 @@ class Controller(ServerBase):
             if isinstance(session, LocalRPC):
                 continue
             session_touched, session_eventlog_touched = session.notify(height, touched, eventlog_touched)
-            if session_touched is not None:
+            if session_touched is not None or session_eventlog_touched is not None:
                 self.ensure_future(session.notify_async(session_touched, session_eventlog_touched))
 
     def notify_peers(self, updates):
