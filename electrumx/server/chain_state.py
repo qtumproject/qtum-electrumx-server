@@ -124,5 +124,14 @@ class ChainState(object):
         return lines
 
     async def get_eventlogs(self, hashY):
-        # todo
-        return []
+        '''Get history asynchronously to reduce latency.'''
+        def job():
+            # History DoS limit.  Each element of history is about 99
+            # bytes when encoded as JSON.  This limits resource usage
+            # on bloated history requests, and uses a smaller divisor
+            # so large requests are logged before refusing them.
+            limit = self._env.max_send // 97
+            return list(self._bp.get_eventlogs(hashY, limit=limit))
+
+        return await run_in_thread(job)
+

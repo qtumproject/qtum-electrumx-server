@@ -23,6 +23,7 @@ import electrumx.lib.util as util
 from electrumx.lib.hash import hash_to_hex_str, HASHX_LEN
 from electrumx.server.storage import db_class
 from electrumx.server.history import History
+from electrumx.server.eventlog import Eventlog
 
 
 UTXO = namedtuple("UTXO", "tx_num tx_pos tx_hash height value")
@@ -35,7 +36,7 @@ class DB(object):
     it was shutdown uncleanly.
     '''
 
-    DB_VERSIONS = [6]
+    DB_VERSIONS = [8]
 
     class DBError(Exception):
         '''Raised on general DB errors generally indicating corruption.'''
@@ -58,6 +59,8 @@ class DB(object):
 
         self.db_class = db_class(self.env.db_engine)
         self.history = History()
+        self.eventlog = Eventlog()
+        self.hashY_db = None
         self.utxo_db = None
         self.tx_counts = None
 
@@ -105,6 +108,11 @@ class DB(object):
         # Then history DB
         self.utxo_flush_count = self.history.open_db(self.db_class, for_sync,
                                                      self.utxo_flush_count)
+
+        # hashY and eventlog
+        self.hashY_db = self.db_class('hashY', for_sync)
+        self.eventlog.open_db(self.db_class, for_sync, self.utxo_flush_count)
+
         self.clear_excess_undo_info()
 
         # Read TX counts (requires meta directory)
@@ -128,6 +136,8 @@ class DB(object):
             self.utxo_db.close()
             self.history.close_db()
             self.utxo_db = None
+            self.history.close_db()
+            self.hashY_db = None
         await self._open_dbs(False)
 
     def fs_update_header_offsets(self, offset_start, height_start, headers):
@@ -235,6 +245,10 @@ class DB(object):
         Set limit to None to get them all.
         '''
         for tx_num in self.history.get_txnums(hashX, limit):
+            yield self.fs_tx_hash(tx_num)
+
+    def get_eventlogs(self, hashY, limit=1000):
+        for tx_num in self.eventlog.get_txnums(hashY, limit):
             yield self.fs_tx_hash(tx_num)
 
     # -- Undo information
