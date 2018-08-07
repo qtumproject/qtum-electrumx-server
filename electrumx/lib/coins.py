@@ -2118,6 +2118,7 @@ class Qtum(Coin):
     PEERS = []
     DAEMON = daemon.QtumDaemon
     DESERIALIZER = lib_tx.DeserializerQtum
+    BLOCK_PROCESSOR = block_proc.QtumBlockProcessor
     STATIC_BLOCK_HEADERS = False
     BASIC_HEADER_SIZE = 180
     POW_BLOCK_COUNT = 5000
