@@ -122,3 +122,7 @@ class ChainState(object):
                          f'{coin.SHORTNAME}')
 
         return lines
+
+    async def get_eventlogs(self, hashY):
+        # todo
+        return []

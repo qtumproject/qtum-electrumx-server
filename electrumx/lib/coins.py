@@ -301,6 +301,13 @@ class Coin(object):
             'nonce': nonce,
         }
 
+    @classmethod
+    def hash160_contract_to_hashY(cls, hash160, contract_addr):
+        m = sha256()
+        m.update(hash160.encode())
+        m.update(contract_addr.encode())
+        return m.digest()
+
 
 class AuxPowMixin(object):
     STATIC_BLOCK_HEADERS = False

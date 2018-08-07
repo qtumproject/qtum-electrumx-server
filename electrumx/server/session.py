@@ -122,6 +122,7 @@ class SessionManager(object):
         self.start_time = time.time()
         self._history_cache = pylru.lrucache(256)
         self._hc_height = 0
+        self._eventlog_cache = pylru.lrucache(256)
         # Cache some idea of room to avoid recounting on each subscription
         self.subs_room = 0
         # Masternode stuff only for such coins
@@ -494,6 +495,13 @@ class SessionManager(object):
                                f'{self.max_subs:,d} reached')
         self.subs_room -= 1
 
+    async def get_eventlogs(self, hashY):
+        '''A caching layer.'''
+        ec = self._eventlog_cache
+        if hashY not in ec:
+            ec[hashY] = await self.chain_state.get_eventlogs(hashY)
+        return ec[hashY]
+
 
 class SessionBase(ServerSession):
     '''Base class of ElectrumX JSON sessions.
@@ -624,6 +632,7 @@ class ElectrumX(SessionBase):
         self.mempool_statuses = {}
         self.set_request_handlers(self.PROTOCOL_MIN)
         self.db_height = self.chain_state.db_height
+        self.contract_subs = {}  # hashY+topic_name: (hash160, contract_addr, topic)
 
     @classmethod
     def protocol_min_max_strings(cls):
@@ -1189,6 +1198,45 @@ class ElectrumX(SessionBase):
             'symbol': util.parse_call_output(symbol, 'str')
         }
 
+    async def contract_event_get_history_1_3(self, hash160, contract_addr):
+        return await self.contract_event_get_history(hash160, contract_addr, util.TOKEN_TRANSFER_TOPIC)
+
+    async def contract_event_get_history(self, hash160, contract_addr, topic):
+        hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
+        hashY = hashY + topic.encode()
+        eventlogs = await self.session_mgr.get_eventlogs(hashY)
+        conf = [{'tx_hash': hash_to_hex_str(tx_hash),
+                 'height': height,
+                 'log_index': log_index}
+                for tx_hash, height, log_index in eventlogs]
+        return conf
+
+    async def hash160_contract_status(self, hash160, contract_addr, topic):
+        eventlogs = await self.contract_event_get_history(hash160, contract_addr, topic)
+        status = ':'.join('{}:{:d}:{:d}'.format(
+            dic.get('tx_hash'),
+            int(dic.get('height')),
+            int(dic.get('log_index'))
+        )
+                         for dic in eventlogs)
+        if status:
+            status = sha256(status.encode('ascii')).hex()
+        else:
+            status = None
+        return status
+
+    async def contract_event_subscribe_1_3(self, hash160, contract_addr):
+        return await self.contract_event_subscribe(hash160, contract_addr,  util.TOKEN_TRANSFER_TOPIC)
+
+    async def contract_event_subscribe(self, hash160, contract_addr, topic):
+        if len(self.contract_subs) >= self.max_subs:
+            raise RPCError('your contract subscription limit {:,d} reached'
+                           .format(self.max_subs))
+        hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
+        hashY = hashY + topic.encode()
+        self.contract_subs[hashY] = (hash160, contract_addr, topic)
+        return await self.hash160_contract_status(hash160, contract_addr, topic)
+
     def set_request_handlers(self, ptuple):
         self.protocol_tuple = ptuple
 
@@ -1232,11 +1280,15 @@ class ElectrumX(SessionBase):
                 'blockchain.headers.subscribe': self.headers_subscribe,
                 'blockchain.transaction.id_from_pos':
                     self.transaction_id_from_pos,
+                'blockchain.contract.event.subscribe': self.contract_event_subscribe,
+                'blockchain.contract.event.get_history': self.contract_event_get_history,
             })
         elif ptuple >= (1, 3):
             handlers.update({
                 'blockchain.block.header': self.block_header_13,
                 'blockchain.headers.subscribe': self.headers_subscribe_True,
+                'blockchain.hash160.contract.get_eventlogs': self.contract_event_get_history_1_3,
+                'blockchain.hash160.contract.subscribe': self.contract_event_subscribe_1_3,
             })
         else:
             handlers.update({

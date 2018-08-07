@@ -339,6 +339,9 @@ unpack_uint64_from = Struct('<Q').unpack_from
 hex_to_bytes = bytes.fromhex
 
 
+TOKEN_TRANSFER_TOPIC = 'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+
+
 def parse_call_output(result, _type):
     output = result.get('executionResult', {}).get('output', '')
     if not output:
