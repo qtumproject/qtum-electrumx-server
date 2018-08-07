@@ -1171,6 +1171,24 @@ class ElectrumX(SessionBase):
         else:
             return tx_hash
 
+    async def contract_call(self, address, data, sender='', *o, **oo):
+        return await self.daemon_request('callcontract', address, data, sender)
+
+    async def transaction_get_receipt(self, txid):
+        return await self.daemon_request('gettransactionreceipt', txid)
+
+    async def token_get_info(self, token_address):
+        name = await self.contract_call(token_address, '06fdde03')
+        decimals = await self.contract_call(token_address, '313ce567')
+        total_supply = await self.contract_call(token_address, '18160ddd')
+        symbol = await self.contract_call(token_address, '95d89b41')
+        return {
+            'name': util.parse_call_output(name, 'str'),
+            'decimals': util.parse_call_output(decimals, 'int'),
+            'total_supply': util.parse_call_output(total_supply, 'int'),
+            'symbol': util.parse_call_output(symbol, 'str')
+        }
+
     def set_request_handlers(self, ptuple):
         self.protocol_tuple = ptuple
 
@@ -1193,6 +1211,9 @@ class ElectrumX(SessionBase):
             'server.features': self.server_features_async,
             'server.peers.subscribe': self.peers_subscribe,
             'server.version': self.server_version,
+            'blockchain.contract.call': self.contract_call,
+            'blochchain.transaction.get_receipt': self.transaction_get_receipt,
+            'blockchain.token.get_info': self.token_get_info,
         }
 
         if ptuple >= (1, 2):

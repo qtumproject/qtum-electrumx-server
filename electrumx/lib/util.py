@@ -26,7 +26,7 @@
 
 '''Miscellaneous utility classes and functions.'''
 
-
+import binascii
 import array
 import inspect
 from ipaddress import ip_address
@@ -337,3 +337,17 @@ unpack_uint32_from = Struct('<I').unpack_from
 unpack_uint64_from = Struct('<Q').unpack_from
 
 hex_to_bytes = bytes.fromhex
+
+
+def parse_call_output(result, _type):
+    output = result.get('executionResult', {}).get('output', '')
+    if not output:
+        return None
+    if 'str' in _type:
+        length = int(result[64:128], 16)
+        parsed = binascii.a2b_hex(result[128: 128+length*2]).decode()
+    elif 'int' in _type:
+        parsed = int(result, 16)
+    else:
+        parsed = None
+    return parsed
