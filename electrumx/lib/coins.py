@@ -2092,3 +2092,87 @@ class GroestlcoinTestnet(Groestlcoin):
         '7frvhgofuf522b5i.onion t',
         'aocojvqcybdoxekv.onion t',
     ]
+
+
+class Qtum(Coin):
+    NAME = "Qtum"
+    SHORTNAME = "Qtum"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("0488b21e")
+    XPRV_VERBYTES = bytes.fromhex("0488ade4")
+    P2PKH_VERBYTE = bytes.fromhex("3a")
+    P2SH_VERBYTES = [bytes.fromhex("32")]
+    WIF_BYTE = bytes.fromhex("80")
+    GENESIS_HASH = '000075aef83cf2853580f8ae8ce6f8c3096cfa21d98334d6e3f95e5582ed986c'
+    TX_COUNT = 217380620
+    TX_COUNT_HEIGHT = 464000
+    TX_PER_BLOCK = 1800
+    PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
+    PEERS = []
+    DAEMON = daemon.QtumDaemon
+    DESERIALIZER = lib_tx.DeserializerQtum
+    STATIC_BLOCK_HEADERS = False
+    BASIC_HEADER_SIZE = 180
+    POW_BLOCK_COUNT = 5000
+    RPC_PORT = 3889
+
+    @classmethod
+    def block_header(cls, block, height):
+        '''Returns the block header given a block and its height.'''
+        deserializer = cls.DESERIALIZER(block, start=cls.BASIC_HEADER_SIZE)
+        sig_length = deserializer.read_varint()
+        return block[:deserializer.cursor + sig_length]
+
+    @classmethod
+    def electrum_header(cls, header, height):
+        version, = struct.unpack('<I', header[:4])
+        timestamp, bits, nonce = struct.unpack('<III', header[68:80])
+
+        deserializer = cls.DESERIALIZER(header, start=cls.BASIC_HEADER_SIZE)
+        sig_length = deserializer.read_varint()
+        header = {
+            'block_height': height,
+            'version': version,
+            'prev_block_hash': hash_to_hex_str(header[4:36]),
+            'merkle_root': hash_to_hex_str(header[36:68]),
+            'timestamp': timestamp,
+            'bits': bits,
+            'nonce': nonce,
+            'hash_state_root': hash_to_hex_str(header[80:112]),
+            'hash_utxo_root': hash_to_hex_str(header[112:144]),
+            'hash_prevout_stake': hash_to_hex_str(header[144:176]),
+            'hash_prevout_n': struct.unpack('<I', header[176:180])[0],
+            'sig': hash_to_hex_str(header[:-sig_length-1:-1]),
+        }
+        return header
+
+    @classmethod
+    def hashX_from_script(cls, script):
+        '''Returns a hashX from a script, or None if the script is provably
+        unspendable so the output can be dropped.
+        '''
+        if script and script[0] == OpCodes.OP_RETURN:
+            return None
+
+        # Qtum: make p2pk and p2pkh the same hashX
+        if (len(script) == 35 and script[0] == 0x21 and script[1] in [2, 3]) \
+                or (len(script) == 67 and script[0] == 0x41 and script[1] in [4, 6, 7]) \
+                and script[-1] == OpCodes.OP_CHECKSIG:
+            pubkey = script[1:-1]
+            script = ScriptPubKey.P2PKH_script(hash160(pubkey))
+
+        return sha256(script).digest()[:HASHX_LEN]
+
+
+class QtumTestnet(Qtum):
+    NET = "testnet"
+    XPUB_VERBYTES = bytes.fromhex("043587CF")
+    XPRV_VERBYTES = bytes.fromhex("04358394")
+    GENESIS_HASH = '0000e803ee215c0684ca0d2f9220594d3f828617972aad66feb2ba51f5e14222'
+    REORG_LIMIT = 8000
+    TX_COUNT = 12242438
+    TX_COUNT_HEIGHT = 1035428
+    TX_PER_BLOCK = 21
+    PEERS = []
+    PEER_DEFAULT_PORTS = {'t': '51001', 's': '51002'}
+    RPC_PORT = 13889
