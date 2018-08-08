@@ -122,7 +122,7 @@ class SessionManager(object):
         self.start_time = time.time()
         self._history_cache = pylru.lrucache(256)
         self._hc_height = 0
-        self._eventlog_cache = pylru.lrucache(256)
+        self._eventlog_cache = pylru.lrucache(256)  # { hashY => [txnum, log_index] }
         # Cache some idea of room to avoid recounting on each subscription
         self.subs_room = 0
         # Masternode stuff only for such coins
@@ -463,6 +463,11 @@ class SessionManager(object):
             hc = self._history_cache
             for hashX in set(hc).intersection(touched):
                 del hc[hashX]
+
+        # clear eventlog cache
+        ec = self._eventlog_cache
+        for hashY in set(ec).intersection(eventlog_touched):
+            del ec[hashY]
 
         async with TaskGroup() as group:
             for session in self.sessions:
