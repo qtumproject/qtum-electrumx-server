@@ -681,10 +681,10 @@ class ElectrumX(SessionBase):
                 contract_status = await self.hash160_contract_status(hash160, contract_addr, topic)
                 # 1.3
                 method = 'blockchain.hash160.contract.subscribe'
-                self.send_notification(method, (hash160, contract_addr, contract_status))
+                await self.send_notification(method, (hash160, contract_addr, contract_status))
                 # 1.4
                 method = 'blockchain.contract.event.subscribe'
-                self.send_notification(method, (hash160, contract_addr, topic, contract_status))
+                await self.send_notification(method, (hash160, contract_addr, topic, contract_status))
 
         changed = {}
 
