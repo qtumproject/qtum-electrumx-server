@@ -618,7 +618,7 @@ class ElectrumX(SessionBase):
     '''A TCP server that handles incoming Electrum connections.'''
 
     PROTOCOL_MIN = (1, 1)
-    PROTOCOL_MAX = (1, 4)
+    PROTOCOL_MAX = (1, 5)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1276,6 +1276,7 @@ class ElectrumX(SessionBase):
             'server.features': self.server_features_async,
             'server.peers.subscribe': self.peers_subscribe,
             'server.version': self.server_version,
+            'blockchain.headers.subscribe': self.headers_subscribe_False,
             'blockchain.contract.call': self.contract_call,
             'blochchain.transaction.get_receipt': self.transaction_get_receipt,
             'blockchain.token.get_info': self.token_get_info,
@@ -1294,7 +1295,7 @@ class ElectrumX(SessionBase):
             handlers.update({
                 'blockchain.block.header': self.block_header,
                 'blockchain.block.headers': self.block_headers,
-                'blockchain.headers.subscribe': self.headers_subscribe,
+
                 'blockchain.transaction.id_from_pos':
                     self.transaction_id_from_pos,
                 'blockchain.contract.event.subscribe': self.contract_event_subscribe,
@@ -1303,13 +1304,11 @@ class ElectrumX(SessionBase):
         elif ptuple >= (1, 3):
             handlers.update({
                 'blockchain.block.header': self.block_header_13,
-                'blockchain.headers.subscribe': self.headers_subscribe_True,
                 'blockchain.hash160.contract.get_eventlogs': self.contract_event_get_history_1_3,
                 'blockchain.hash160.contract.subscribe': self.contract_event_subscribe_1_3,
             })
         else:
             handlers.update({
-                'blockchain.headers.subscribe': self.headers_subscribe_False,
                 'blockchain.address.get_balance': self.address_get_balance,
                 'blockchain.address.get_history': self.address_get_history,
                 'blockchain.address.get_mempool': self.address_get_mempool,
