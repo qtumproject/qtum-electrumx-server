@@ -455,7 +455,7 @@ class SessionManager(object):
             hc[hashX] = await self.chain_state.get_history(hashX)
         return hc[hashX]
 
-    async def _notify_sessions(self, height, touched):
+    async def _notify_sessions(self, height, touched, eventlog_touched=None):
         '''Notify sessions about height changes and touched addresses.'''
         # Invalidate our history cache for touched hashXs
         if height != self._hc_height:
@@ -532,7 +532,7 @@ class SessionBase(ServerSession):
         self._receive_message_orig = self.connection.receive_message
         self.connection.receive_message = self.receive_message
 
-    async def notify(self, height, touched):
+    async def notify(self, height, touched, eventlog_touched):
         pass
 
     def peer_address_str(self, *, for_log=True):
@@ -674,7 +674,18 @@ class ElectrumX(SessionBase):
     def sub_count(self):
         return len(self.hashX_subs)
 
-    async def notify_touched(self, our_touched):
+    async def notify_touched(self, our_touched, our_eventlog_touched):
+        if our_eventlog_touched:
+            for hashY in our_eventlog_touched:
+                hash160, contract_addr, topic = self.contract_subs[hashY]
+                contract_status = await self.hash160_contract_status(hash160, contract_addr, topic)
+                # 1.3
+                method = 'blockchain.hash160.contract.subscribe'
+                self.send_notification(method, (hash160, contract_addr, contract_status))
+                # 1.4
+                method = 'blockchain.contract.event.subscribe'
+                self.send_notification(method, (hash160, contract_addr, topic, contract_status))
+
         changed = {}
 
         for hashX in our_touched:
@@ -704,7 +715,7 @@ class ElectrumX(SessionBase):
             self.logger.info('notified of {:,d} address{}'
                              .format(len(changed), es))
 
-    async def notify(self, height, touched):
+    async def notify(self, height, touched, eventlog_touched):
         '''Notify the client about changes to touched addresses (from mempool
         updates or new blocks) and height.
 
@@ -723,8 +734,14 @@ class ElectrumX(SessionBase):
                                              args)
 
         touched = touched.intersection(self.hashX_subs)
-        if touched or (height_changed and self.mempool_statuses):
-            await self.notify_touched(touched)
+
+        if eventlog_touched:
+            our_eventlog_touched = eventlog_touched.intersection(self.contract_subs)
+        else:
+            our_eventlog_touched = set()
+
+        if touched or (height_changed and self.mempool_statuses) or our_eventlog_touched:
+            await self.notify_touched(touched, our_eventlog_touched)
 
     def assert_boolean(self, value):
         '''Return param value it is boolean otherwise raise an RPCError.'''

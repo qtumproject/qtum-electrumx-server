@@ -35,6 +35,7 @@ class Notifications(object):
         self._touched_bp = {}
         self._highest_block = 0
         self._notify_funcs = []
+        self._eventlog_touched = {}
 
     async def _maybe_notify(self):
         tmp, tbp = self._touched_mp, self._touched_bp
@@ -54,8 +55,9 @@ class Notifications(object):
             del tmp[old]
         for old in [h for h in tbp if h <= height]:
             del tbp[old]
+        eventlog_touched = self._eventlog_touched.pop(height)
         for notify_func in self._notify_funcs:
-            await notify_func(height, touched)
+            await notify_func(height, touched, eventlog_touched)
 
     def add_callback(self, notify_func):
         self._notify_funcs.append(notify_func)
@@ -67,6 +69,7 @@ class Notifications(object):
     async def on_block(self, touched, eventlog_touched, height):
         self._touched_bp[height] = touched
         self._highest_block = height
+        self._eventlog_touched[height] = eventlog_touched
         await self._maybe_notify()
 
 
