@@ -466,7 +466,7 @@ class SessionManager(object):
 
         async with TaskGroup() as group:
             for session in self.sessions:
-                await group.spawn(session.notify(height, touched))
+                await group.spawn(session.notify(height, touched, eventlog_touched))
 
     def add_session(self, session):
         self.sessions.add(session)
