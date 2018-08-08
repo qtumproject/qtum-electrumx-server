@@ -250,8 +250,8 @@ class DB(object):
             yield self.fs_tx_hash(tx_num)
 
     def get_eventlogs(self, hashY, limit=1000):
-        for tx_num in self.eventlog.get_txnums(hashY, limit):
-            yield self.fs_tx_hash(tx_num)
+        for tx_num, log_index in self.eventlog.get_txnums(hashY, limit):
+            yield self.fs_tx_hash(tx_num) + (log_index,)
 
     # -- Undo information
 

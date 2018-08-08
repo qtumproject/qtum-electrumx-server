@@ -347,10 +347,10 @@ def parse_call_output(result, _type):
     if not output:
         return None
     if 'str' in _type:
-        length = int(result[64:128], 16)
-        parsed = binascii.a2b_hex(result[128: 128+length*2]).decode()
+        length = int(output[64:128], 16)
+        parsed = binascii.a2b_hex(output[128: 128+length*2]).decode()
     elif 'int' in _type:
-        parsed = int(result, 16)
+        parsed = int(output, 16)
     else:
         parsed = None
     return parsed

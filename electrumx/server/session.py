@@ -1197,8 +1197,12 @@ class ElectrumX(SessionBase):
         else:
             return tx_hash
 
-    async def contract_call(self, address, data, sender='', *o, **oo):
-        return await self.daemon_request('callcontract', address, data, sender)
+    async def contract_call(self, address, data, sender='', result_type=None):
+        result = await self.daemon_request('callcontract', address, data, sender)
+        if not result_type:
+            return result
+        else:
+            return util.parse_call_output(result, result_type)
 
     async def transaction_get_receipt(self, txid):
         return await self.daemon_request('gettransactionreceipt', txid)
