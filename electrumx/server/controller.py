@@ -55,7 +55,10 @@ class Notifications(object):
             del tmp[old]
         for old in [h for h in tbp if h <= height]:
             del tbp[old]
-        eventlog_touched = self._eventlog_touched.pop(height)
+        if height in self._eventlog_touched:
+            eventlog_touched = self._eventlog_touched.pop(height)
+        else:
+            eventlog_touched = set()
         for notify_func in self._notify_funcs:
             await notify_func(height, touched, eventlog_touched)
 
