@@ -108,7 +108,7 @@ class Eventlog(object):
         self.unflushed_count = 0
         return count
 
-    def backup_eventlogs(self, hashY_keys, tx_count):
+    def backup(self, hashY_keys, tx_count):
         # Not certain this is needed, but it doesn't hurt
         self.flush_count += 1
         nremoves = 0

@@ -64,7 +64,7 @@ class Notifications(object):
         self._touched_mp[height] = touched
         await self._maybe_notify()
 
-    async def on_block(self, touched, height):
+    async def on_block(self, touched, eventlog_touched, height):
         self._touched_bp[height] = touched
         self._highest_block = height
         await self._maybe_notify()

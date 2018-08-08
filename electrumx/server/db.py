@@ -136,7 +136,9 @@ class DB(object):
             self.utxo_db.close()
             self.history.close_db()
             self.utxo_db = None
-            self.history.close_db()
+            self.eventlog.close_db()
+        if self.hashY_db:
+            self.hashY_db.close()
             self.hashY_db = None
         await self._open_dbs(False)
 
@@ -460,3 +462,16 @@ class DB(object):
 
         hashX_pairs = await run_in_thread(lookup_hashXs)
         return await run_in_thread(lookup_utxos, hashX_pairs)
+
+    # HashY
+
+    def flush_hashYs(self, hashYs):
+        with self.hashY_db.write_batch() as batch:
+            for blockHash, hashY_arr in hashYs.items():
+                batch.put(blockHash.encode(), b'\x00'.join(hashY_arr))
+
+    def get_block_hashYs(self, block_hash):
+        hashYs = self.hashY_db.get(block_hash.encode())
+        if hashYs:
+            return hashYs.split(b'\x00')
+        return []

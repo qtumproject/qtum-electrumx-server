@@ -8,12 +8,13 @@
 
 '''Block prefetcher and chain processor.'''
 
-
 import array
 import asyncio
 from struct import pack, unpack
 import time
-from functools import partial
+from functools import reduce
+import operator
+from collections import defaultdict
 
 from aiorpcx import TaskGroup, run_in_thread
 
@@ -21,6 +22,7 @@ import electrumx
 from electrumx.server.daemon import DaemonError
 from electrumx.lib.hash import hash_to_hex_str, HASHX_LEN
 from electrumx.lib.merkle import Merkle, MerkleCache
+import electrumx.lib.util as util
 from electrumx.lib.util import chunks, formatted_time, class_logger
 import electrumx.server.db
 
@@ -197,6 +199,10 @@ class BlockProcessor(electrumx.server.db.DB):
         self.utxo_cache = {}
         self.db_deletes = []
 
+        # eventlog and hashY
+        self.eventlog_touched = set()
+        self.hashYs = defaultdict(set)  # {blockHash => [hashY, ]}, for reorg_chain
+
         # If the lock is successfully acquired, in-memory chain state
         # is consistent with self.height
         self.state_lock = asyncio.Lock()
@@ -205,7 +211,7 @@ class BlockProcessor(electrumx.server.db.DB):
         async with self.state_lock:
             return await asyncio.shield(run_in_thread(func, *args))
 
-    async def check_and_advance_blocks(self, raw_blocks):
+    async def check_and_advance_blocks_eventlogs(self, raw_blocks, raw_eventlogs):
         '''Process the list of raw blocks passed.  Detects and handles
         reorgs.
         '''
@@ -219,10 +225,11 @@ class BlockProcessor(electrumx.server.db.DB):
         chain = [self.tip] + [self.coin.header_hash(h) for h in headers[:-1]]
 
         if hprevs == chain:
-            await self.run_in_thread_shielded(self.advance_blocks, blocks)
+            await self.run_in_thread_shielded(self.advance_blocks_eventlogs, blocks, raw_eventlogs)
             if self._caught_up_event.is_set():
-                await self.notifications.on_block(self.touched, self.height)
+                await self.notifications.on_block(self.touched, self.eventlog_touched, self.height)
             self.touched = set()
+            self.eventlog_touched = set()
         elif hprevs[0] != chain[0]:
             await self.reorg_chain()
         else:
@@ -258,9 +265,16 @@ class BlockProcessor(electrumx.server.db.DB):
         start, last, hashes = await self.reorg_hashes(count)
         # Reverse and convert to hex strings.
         hashes = [hash_to_hex_str(hash) for hash in reversed(hashes)]
+        # get saved evntlog hashYs
+        if hashes:
+            eventlog_hashYs = reduce(operator.add, [self.get_block_hashYs(x) for x in hashes])
+        else:
+            eventlog_hashYs = []
+        self.logger.info('chain reorg eventlog_hashYs {} {}'.format(eventlog_hashYs, hashes))
+
         for hex_hashes in chunks(hashes, 50):
             raw_blocks = await get_raw_blocks(last, hex_hashes)
-            await self.run_in_thread_shielded(self.backup_blocks, raw_blocks)
+            await self.run_in_thread_shielded(self.backup_blocks_eventlogs, raw_blocks, eventlog_hashYs)
             last -= len(raw_blocks)
         # Truncate header_mc: header count is 1 more than the height.
         # Note header_mc is None if the reorg happens at startup.
@@ -330,7 +344,9 @@ class BlockProcessor(electrumx.server.db.DB):
         assert not self.undo_infos
         assert not self.utxo_cache
         assert not self.db_deletes
+        assert not self.hashYs
         self.history.assert_flushed()
+        self.eventlog.assert_flushed()
 
     def flush(self, flush_utxos=False):
         '''Flush out cached state.
@@ -356,6 +372,19 @@ class BlockProcessor(electrumx.server.db.DB):
         if self.utxo_db.for_sync:
             self.logger.info('flushed history in {:.1f}s for {:,d} addrs'
                              .format(time.time() - fs_end, hashX_count))
+
+        # Eventlog
+        hashY_count = self.eventlog.flush()
+        if self.utxo_db.for_sync:
+            self.logger.info('flushed eventlog in {:.1f}s for {:,d} topics'
+                             .format(time.time() - fs_end, hashY_count))
+
+        # HashYs
+        self.flush_hashYs(self.hashYs)
+        if self.utxo_db.for_sync:
+            self.logger.info('flushed hashYs in {:.1f}s for {:,d} blocks'
+                             .format(time.time() - fs_end, len(self.hashYs)))
+        self.hashYs = defaultdict(set)
 
         # Flush state last as it reads the wall time.
         with self.utxo_db.write_batch() as batch:
@@ -416,6 +445,7 @@ class BlockProcessor(electrumx.server.db.DB):
         '''
         assert self.height < self.db_height
         self.history.assert_flushed()
+        self.eventlog.assert_flushed()
 
         flush_start = time.time()
 
@@ -431,6 +461,11 @@ class BlockProcessor(electrumx.server.db.DB):
         nremoves = self.history.backup(self.touched, self.tx_count)
         self.logger.info('backing up removed {:,d} history entries'
                          .format(nremoves))
+
+        self.eventlog_touched.discard(None)
+        n_eventlogs = self.eventlog.backup(self.eventlog_touched, self.tx_count)
+        self.logger.info('backing up removed {:,d} eventlog entries'
+                         .format(n_eventlogs))
 
         with self.utxo_db.write_batch() as batch:
             # Flush state last as it reads the wall time.
@@ -467,7 +502,7 @@ class BlockProcessor(electrumx.server.db.DB):
         if utxo_MB + hist_MB >= self.cache_MB or hist_MB >= self.cache_MB // 5:
             self.flush(utxo_MB >= self.cache_MB * 4 // 5)
 
-    def advance_blocks(self, blocks):
+    def advance_blocks_eventlogs(self, blocks, raw_eventlogs):
         '''Synchronously advance the blocks.
 
         It is already verified they correctly connect onto our tip.
@@ -476,9 +511,12 @@ class BlockProcessor(electrumx.server.db.DB):
         min_height = self.min_undo_height(self.daemon.cached_height())
         height = self.height
 
+        eventlog_dict, hashY_dict = self.raw_eventlogs_to_dict(raw_eventlogs)
+        self.hashYs = hashY_dict  # no need to cache all hashYs, only need most recent
+
         for block in blocks:
             height += 1
-            undo_info = self.advance_txs(block.transactions)
+            undo_info = self.advance_txs(block.transactions, eventlog_dict)
             if height >= min_height:
                 self.undo_infos.append((undo_info, height))
                 self.write_raw_block(block.raw, height)
@@ -503,7 +541,7 @@ class BlockProcessor(electrumx.server.db.DB):
                              .format(len(blocks), s,
                                      time.time() - start))
 
-    def advance_txs(self, txs):
+    def advance_txs(self, txs, eventlog_dict):
         self.tx_hashes.append(b''.join(tx_hash for tx, tx_hash in txs))
 
         # Use local vars for speed in the loops
@@ -518,10 +556,20 @@ class BlockProcessor(electrumx.server.db.DB):
         hashXs_by_tx = []
         append_hashXs = hashXs_by_tx.append
 
+        eventlog_touched = self.eventlog_touched
+        eventlogs = defaultdict(list)  # {b'hashY' => [array('I', [txnum, log_index]),]}
+
         for tx, tx_hash in txs:
             hashXs = []
             append_hashX = hashXs.append
             tx_numb = s_pack('<I', tx_num)
+
+            # eventlog
+            datas = eventlog_dict.get(hash_to_hex_str(tx_hash), [])
+            for data in datas:
+                hashY, log_index = data
+                eventlogs[hashY].append(array.array('I', [tx_num, log_index]))
+                eventlog_touched.add(hashY)
 
             # Spend the inputs
             if not tx.is_coinbase:
@@ -543,6 +591,7 @@ class BlockProcessor(electrumx.server.db.DB):
             update_touched(hashXs)
             tx_num += 1
 
+        self.eventlog.add_unflushed(eventlogs)
         self.history.add_unflushed(hashXs_by_tx, self.tx_count)
 
         self.tx_count = tx_num
@@ -550,7 +599,7 @@ class BlockProcessor(electrumx.server.db.DB):
 
         return undo_info
 
-    def backup_blocks(self, raw_blocks):
+    def backup_blocks_eventlogs(self, raw_blocks, eventlog_hashYs):
         '''Backup the raw blocks and flush.
 
         The blocks should be in order of decreasing height, starting at.
@@ -558,6 +607,8 @@ class BlockProcessor(electrumx.server.db.DB):
         '''
         self.assert_flushed()
         assert self.height >= len(raw_blocks)
+
+        self.eventlog_touched.update(eventlog_hashYs)
 
         coin = self.coin
         for raw_block in raw_blocks:
@@ -769,7 +820,8 @@ class BlockProcessor(electrumx.server.db.DB):
                 self.reorg_count = 0
             else:
                 blocks = self.prefetcher.get_prefetched_blocks()
-                await self.check_and_advance_blocks(blocks)
+                raw_eventlogs = self.prefetcher.get_prefetched_raw_eventlogs()
+                await self.check_and_advance_blocks_eventlogs(blocks, raw_eventlogs)
 
     async def _first_caught_up(self):
         self.logger.info(f'caught up to height {self.height}')
@@ -781,7 +833,7 @@ class BlockProcessor(electrumx.server.db.DB):
             self.logger.info(f'{electrumx.version} synced to '
                              f'height {self.height:,d}')
         # Initialise the notification framework
-        await self.notifications.on_block(set(), self.height)
+        await self.notifications.on_block(set(), set(), self.height)
         # Reopen for serving
         await self.open_for_serving()
         # Populate the header merkle cache
@@ -803,6 +855,38 @@ class BlockProcessor(electrumx.server.db.DB):
         self.last_flush_tx_count = self.tx_count
         if self.utxo_db.for_sync:
             self.logger.info(f'flushing DB cache at {self.cache_MB:,d} MB')
+
+    def raw_eventlogs_to_dict(self, raw_eventlogs):
+        hash160_contract_to_hashY = self.coin.hash160_contract_to_hashY
+        eventlog_dict = defaultdict(set)  # hashY => [(txid, log_index)]
+        hashY_dict = defaultdict(set)  # blockHash => [hashY, ]
+        for eventlog in raw_eventlogs:
+            block_hash = eventlog.get('blockHash')
+            txid = eventlog.get('transactionHash')
+            if not txid or not block_hash:
+                continue
+            for log_index, log in enumerate(eventlog.get('log', [])):
+                if not isinstance(log, dict):
+                    print('log not dict')
+                    continue
+                contract_addr = log.get('address')
+                if not contract_addr:
+                    continue
+                topic_itmes = log.get('topics', [])
+                if len(topic_itmes) < 1:
+                    continue
+                topic_name = topic_itmes[0]
+                for item in topic_itmes[1:]:
+                    # only want hash160 address
+                    if len(item) == 64 \
+                            and item.startswith('0'*24) \
+                            and not item.startswith('0'*48):
+                        hash160 = item[-40:]
+                        hashY = hash160_contract_to_hashY(hash160, contract_addr)
+                        key = hashY+topic_name.encode()
+                        eventlog_dict[txid].add((key, log_index))
+                        hashY_dict[block_hash].add(key)
+        return eventlog_dict, hashY_dict
 
     # --- External API
 
@@ -855,10 +939,10 @@ class DecredBlockProcessor(BlockProcessor):
         return start, count
 
 
-class QtumBlockProcessor(BlockProcessor):
 
-    def __init__(self, env, daemon, notifications):
-        super().__init__(env, daemon, notifications)
-        self.prefetcher = QtumPrefetcher(daemon, env.coin, self.blocks_event)
+
+
+
+
 
 
