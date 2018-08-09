@@ -49,6 +49,7 @@ class Eventlog(object):
             self.db_version = state.get('db_version', 0)
 
         self.logger.info(f'eventlog DB version: {self.db_version}')
+        self.logger.info(f'flush count: {self.flush_count:,d}')
 
     def write_state(self, batch):
         '''Write eventlog state to the batch.'''
