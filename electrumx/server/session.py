@@ -20,8 +20,8 @@ from collections import defaultdict
 from functools import partial
 
 from aiorpcx import (
-    ServerSession, JSONRPCAutoDetect, TaskGroup, handler_invocation,
-    RPCError, Request, ignore_after
+    ServerSession, JSONRPCAutoDetect, JSONRPCConnection,
+    TaskGroup, handler_invocation, RPCError, Request, ignore_after
 )
 
 import electrumx
@@ -253,7 +253,7 @@ class SessionManager(object):
                 # Give the sockets some time to close gracefully
                 async with TaskGroup() as group:
                     for session in stale_sessions:
-                        await group.spawn(session.close(force_after=30))
+                        await group.spawn(session.close())
 
             # Consolidate small groups
             bw_limit = self.env.bandwidth_limit
@@ -431,8 +431,8 @@ class SessionManager(object):
             await self._start_external_servers()
             # Peer discovery should start after the external servers
             # because we connect to ourself
-            async with TaskGroup(wait=object) as group:
-                await group.spawn(self.peer_mgr.discover_peers(group))
+            async with TaskGroup() as group:
+                await group.spawn(self.peer_mgr.discover_peers())
                 await group.spawn(self._clear_stale_sessions())
                 await group.spawn(self._log_sessions())
                 await group.spawn(self._restart_if_paused())
@@ -442,7 +442,7 @@ class SessionManager(object):
             await self._close_servers(list(self.servers.keys()))
             async with TaskGroup() as group:
                 for session in list(self.sessions):
-                    await group.spawn(session.close(force_after=0.1))
+                    await group.spawn(session.close(force_after=1))
 
     def session_count(self):
         '''The number of connections that we've sent something to.'''
@@ -519,7 +519,8 @@ class SessionBase(ServerSession):
     session_counter = itertools.count()
 
     def __init__(self, session_mgr, chain_state, mempool, peer_mgr, kind):
-        super().__init__(protocol=JSONRPCAutoDetect)
+        connection = JSONRPCConnection(JSONRPCAutoDetect)
+        super().__init__(connection=connection)
         self.logger = util.class_logger(__name__, self.__class__.__name__)
         self.session_mgr = session_mgr
         self.chain_state = chain_state
@@ -600,13 +601,6 @@ class SessionBase(ServerSession):
     def sub_count(self):
         return 0
 
-    # FIXME: make this the aiorpcx API for version 0.7
-    async def close(self, force_after=30):
-        '''Close the connection and return when closed.'''
-        async with ignore_after(force_after):
-            await super().close()
-        self.abort()
-
     async def handle_request(self, request):
         '''Handle an incoming request.  ElectrumX doesn't receive
         notifications from client sessions.
@@ -630,7 +624,7 @@ class ElectrumX(SessionBase):
         self.subscribe_headers = False
         self.subscribe_headers_raw = False
         self.notified_height = None
-        self.connection._max_response_size = self.env.max_send
+        self.connection.max_response_size = self.env.max_send
         self.max_subs = self.env.max_session_subs
         self.hashX_subs = {}
         self.sv_seen = False
@@ -701,8 +695,10 @@ class ElectrumX(SessionBase):
         # Check mempool hashXs - the status is a function of the
         # confirmed state of other transactions.  Note: we cannot
         # iterate over mempool_statuses as it changes size.
-        for hashX in set(self.mempool_statuses):
-            old_status = self.mempool_statuses[hashX]
+        for hashX in tuple(self.mempool_statuses):
+            # Items can be evicted whilst await-ing below; False
+            # ensures such hashXs are notified
+            old_status = self.mempool_statuses.get(hashX, False)
             status = await self.address_status(hashX)
             if status != old_status:
                 alias = self.hashX_subs[hashX]
