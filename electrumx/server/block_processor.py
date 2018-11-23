@@ -21,15 +21,8 @@ from aiorpcx import TaskGroup, run_in_thread
 import electrumx
 from electrumx.server.daemon import DaemonError
 from electrumx.lib.hash import hash_to_hex_str, HASHX_LEN
-<<<<<<< HEAD
-from electrumx.lib.merkle import Merkle, MerkleCache
-import electrumx.lib.util as util
-from electrumx.lib.util import chunks, formatted_time, class_logger
-import electrumx.server.db
-=======
 from electrumx.lib.util import chunks, class_logger
 from electrumx.server.db import FlushData
->>>>>>> remotes/upstream/master
 
 
 class Prefetcher(object):
@@ -229,7 +222,7 @@ class BlockProcessor(object):
 
         if hprevs == chain:
             start = time.time()
-            await self.run_in_thread_with_lock(self.advance_blocks, blocks, raw_eventlogs)
+            await self.run_in_thread_with_lock(self.advance_blocks_eventlogs, blocks, raw_eventlogs)
             await self._maybe_flush()
             if not self.db.first_sync:
                 s = '' if len(blocks) == 1 else 's'
@@ -290,12 +283,8 @@ class BlockProcessor(object):
 
         for hex_hashes in chunks(hashes, 50):
             raw_blocks = await get_raw_blocks(last, hex_hashes)
-<<<<<<< HEAD
-            await self.run_in_thread_shielded(self.backup_blocks_eventlogs, raw_blocks, eventlog_hashYs)
-=======
-            await self.run_in_thread_with_lock(self.backup_blocks, raw_blocks)
+            await self.run_in_thread_with_lock(self.backup_blocks_eventlogs, raw_blocks, eventlog_hashYs)
             await self.run_in_thread_with_lock(flush_backup)
->>>>>>> remotes/upstream/master
             last -= len(raw_blocks)
         await self.prefetcher.reset_height(self.height)
 
@@ -346,156 +335,6 @@ class BlockProcessor(object):
 
         return start, count
 
-<<<<<<< HEAD
-    def flush_state(self, batch):
-        '''Flush chain state to the batch.'''
-        now = time.time()
-        self.wall_time += now - self.last_flush
-        self.last_flush = now
-        self.last_flush_tx_count = self.tx_count
-        self.write_utxo_state(batch)
-
-    def assert_flushed(self):
-        '''Asserts state is fully flushed.'''
-        assert self.tx_count == self.fs_tx_count == self.db_tx_count
-        assert self.height == self.fs_height == self.db_height
-        assert not self.undo_infos
-        assert not self.utxo_cache
-        assert not self.db_deletes
-        assert not self.hashYs
-        self.history.assert_flushed()
-        self.eventlog.assert_flushed()
-
-    def flush(self, flush_utxos=False):
-        '''Flush out cached state.
-
-        History is always flushed.  UTXOs are flushed if flush_utxos.'''
-        if self.height == self.db_height:
-            self.assert_flushed()
-            return
-
-        flush_start = time.time()
-        last_flush = self.last_flush
-        tx_diff = self.tx_count - self.last_flush_tx_count
-
-        # Flush to file system
-        self.fs_flush()
-        fs_end = time.time()
-        if self.utxo_db.for_sync:
-            self.logger.info('flushed to FS in {:.1f}s'
-                             .format(fs_end - flush_start))
-
-        # History next - it's fast and frees memory
-        hashX_count = self.history.flush()
-        if self.utxo_db.for_sync:
-            self.logger.info('flushed history in {:.1f}s for {:,d} addrs'
-                             .format(time.time() - fs_end, hashX_count))
-
-        # Eventlog
-        hashY_count = self.eventlog.flush()
-        if self.utxo_db.for_sync:
-            self.logger.info('flushed eventlog in {:.1f}s for {:,d} topics'
-                             .format(time.time() - fs_end, hashY_count))
-
-        # HashYs
-        self.flush_hashYs(self.hashYs)
-        if self.utxo_db.for_sync:
-            self.logger.info('flushed hashYs in {:.1f}s for {:,d} blocks'
-                             .format(time.time() - fs_end, len(self.hashYs)))
-        self.hashYs = defaultdict(set)
-
-        # Flush state last as it reads the wall time.
-        with self.utxo_db.write_batch() as batch:
-            if flush_utxos:
-                self.flush_utxos(batch)
-            self.flush_state(batch)
-
-        # Update and put the wall time again - otherwise we drop the
-        # time it took to commit the batch
-        self.flush_state(self.utxo_db)
-
-        self.logger.info('flush #{:,d} took {:.1f}s.  Height {:,d} txs: {:,d}'
-                         .format(self.history.flush_count,
-                                 self.last_flush - flush_start,
-                                 self.height, self.tx_count))
-
-        # Catch-up stats
-        if self.utxo_db.for_sync:
-            tx_per_sec = int(self.tx_count / self.wall_time)
-            this_tx_per_sec = 1 + int(tx_diff / (self.last_flush - last_flush))
-            self.logger.info('tx/sec since genesis: {:,d}, '
-                             'since last flush: {:,d}'
-                             .format(tx_per_sec, this_tx_per_sec))
-
-            daemon_height = self.daemon.cached_height()
-            if self.height > self.coin.TX_COUNT_HEIGHT:
-                tx_est = (daemon_height - self.height) * self.coin.TX_PER_BLOCK
-            else:
-                tx_est = ((daemon_height - self.coin.TX_COUNT_HEIGHT)
-                          * self.coin.TX_PER_BLOCK
-                          + (self.coin.TX_COUNT - self.tx_count))
-
-            # Damp the enthusiasm
-            realism = 2.0 - 0.9 * self.height / self.coin.TX_COUNT_HEIGHT
-            tx_est *= max(realism, 1.0)
-
-            self.logger.info('sync time: {}  ETA: {}'
-                             .format(formatted_time(self.wall_time),
-                                     formatted_time(tx_est / this_tx_per_sec)))
-
-    def fs_flush(self):
-        '''Flush the things stored on the filesystem.'''
-        assert self.fs_height + len(self.headers) == self.height
-        assert self.tx_count == self.tx_counts[-1] if self.tx_counts else 0
-
-        self.fs_update(self.fs_height, self.headers, self.tx_hashes)
-        self.fs_height = self.height
-        self.fs_tx_count = self.tx_count
-        self.tx_hashes = []
-        self.headers = []
-
-    def backup_flush(self):
-        '''Like flush() but when backing up.  All UTXOs are flushed.
-
-        hashXs - sequence of hashXs which were touched by backing
-        up.  Searched for history entries to remove after the backup
-        height.
-        '''
-        assert self.height < self.db_height
-        self.history.assert_flushed()
-        self.eventlog.assert_flushed()
-
-        flush_start = time.time()
-
-        # Backup FS (just move the pointers back)
-        self.fs_height = self.height
-        self.fs_tx_count = self.tx_count
-        assert not self.headers
-        assert not self.tx_hashes
-
-        # Backup history.  self.touched can include other addresses
-        # which is harmless, but remove None.
-        self.touched.discard(None)
-        nremoves = self.history.backup(self.touched, self.tx_count)
-        self.logger.info('backing up removed {:,d} history entries'
-                         .format(nremoves))
-
-        self.eventlog_touched.discard(None)
-        n_eventlogs = self.eventlog.backup(self.eventlog_touched, self.tx_count)
-        self.logger.info('backing up removed {:,d} eventlog entries'
-                         .format(n_eventlogs))
-
-        with self.utxo_db.write_batch() as batch:
-            # Flush state last as it reads the wall time.
-            self.flush_utxos(batch)
-            self.flush_state(batch)
-
-        self.logger.info('backup flush #{:,d} took {:.1f}s.  '
-                         'Height {:,d} txs: {:,d}'
-                         .format(self.history.flush_count,
-                                 self.last_flush - flush_start,
-                                 self.height, self.tx_count))
-=======
     def estimate_txs_remaining(self):
         # Try to estimate how many txs there are to go
         daemon_height = self.daemon.cached_height()
@@ -517,7 +356,8 @@ class BlockProcessor(object):
     async def flush(self, flush_utxos):
         def flush():
             self.db.flush_dbs(self.flush_data(), flush_utxos,
-                              self.estimate_txs_remaining)
+                              self.estimate_txs_remaining, self.hashYs)
+            self.hashYs = defaultdict(set)
         await self.run_in_thread_with_lock(flush)
 
     async def _maybe_flush(self):
@@ -530,7 +370,6 @@ class BlockProcessor(object):
             if flush_arg is not None:
                 await self.flush(flush_arg)
             self.next_cache_check = time.time() + 30
->>>>>>> remotes/upstream/master
 
     def check_cache_size(self):
         '''Flush a cache if it gets too big.'''
@@ -581,26 +420,7 @@ class BlockProcessor(object):
         self.headers.extend(headers)
         self.tip = self.coin.header_hash(headers[-1])
 
-<<<<<<< HEAD
-        # If caught up, flush everything as client queries are
-        # performed on the DB.
-        if self._caught_up_event.is_set():
-            self.flush(True)
-        else:
-            if time.time() > self.next_cache_check:
-                self.check_cache_size()
-                self.next_cache_check = time.time() + 30
-
-        if not self.first_sync:
-            s = '' if len(blocks) == 1 else 's'
-            self.logger.info('processed {:,d} block{} in {:.1f}s'
-                             .format(len(blocks), s,
-                                     time.time() - start))
-
     def advance_txs(self, txs, eventlog_dict):
-=======
-    def advance_txs(self, txs):
->>>>>>> remotes/upstream/master
         self.tx_hashes.append(b''.join(tx_hash for tx, tx_hash in txs))
 
         # Use local vars for speed in the loops
@@ -651,12 +471,8 @@ class BlockProcessor(object):
             update_touched(hashXs)
             tx_num += 1
 
-<<<<<<< HEAD
-        self.eventlog.add_unflushed(eventlogs)
-        self.history.add_unflushed(hashXs_by_tx, self.tx_count)
-=======
+        self.db.eventlog.add_unflushed(eventlogs)
         self.db.history.add_unflushed(hashXs_by_tx, self.tx_count)
->>>>>>> remotes/upstream/master
 
         self.tx_count = tx_num
         self.db.tx_counts.append(tx_num)
@@ -854,12 +670,6 @@ class BlockProcessor(object):
         if first_sync:
             self.logger.info(f'{electrumx.version} synced to '
                              f'height {self.height:,d}')
-<<<<<<< HEAD
-        # Initialise the notification framework
-        await self.notifications.on_block(set(), set(), self.height)
-=======
->>>>>>> remotes/upstream/master
-        # Reopen for serving
         await self.db.open_for_serving()
 
     async def _first_open_dbs(self):
@@ -935,149 +745,3 @@ class BlockProcessor(object):
             self.blocks_event.set()
             return True
         return False
-
-
-class DecredBlockProcessor(BlockProcessor):
-    async def calc_reorg_range(self, count):
-        start, count = await super().calc_reorg_range(count)
-        if start > 0:
-            # A reorg in Decred can invalidate the previous block
-            start -= 1
-            count += 1
-        return start, count
-
-
-<<<<<<< HEAD
-
-
-
-
-
-
-
-=======
-class NamecoinBlockProcessor(BlockProcessor):
-
-    def advance_txs(self, txs):
-        result = super().advance_txs(txs)
-
-        tx_num = self.tx_count - len(txs)
-        script_name_hashX = self.coin.name_hashX_from_script
-        update_touched = self.touched.update
-        hashXs_by_tx = []
-        append_hashXs = hashXs_by_tx.append
-
-        for tx, tx_hash in txs:
-            hashXs = []
-            append_hashX = hashXs.append
-
-            # Add the new UTXOs and associate them with the name script
-            for idx, txout in enumerate(tx.outputs):
-                # Get the hashX of the name script.  Ignore non-name scripts.
-                hashX = script_name_hashX(txout.pk_script)
-                if hashX:
-                    append_hashX(hashX)
-
-            append_hashXs(hashXs)
-            update_touched(hashXs)
-            tx_num += 1
-
-        self.db.history.add_unflushed(hashXs_by_tx, self.tx_count - len(txs))
-
-        return result
-
-
-class LTORBlockProcessor(BlockProcessor):
-
-    def advance_txs(self, txs):
-        self.tx_hashes.append(b''.join(tx_hash for tx, tx_hash in txs))
-
-        # Use local vars for speed in the loops
-        undo_info = []
-        tx_num = self.tx_count
-        script_hashX = self.coin.hashX_from_script
-        s_pack = pack
-        put_utxo = self.utxo_cache.__setitem__
-        spend_utxo = self.spend_utxo
-        undo_info_append = undo_info.append
-        update_touched = self.touched.update
-
-        hashXs_by_tx = [set() for _ in txs]
-
-        # Add the new UTXOs
-        for (tx, tx_hash), hashXs in zip(txs, hashXs_by_tx):
-            add_hashXs = hashXs.add
-            tx_numb = s_pack('<I', tx_num)
-
-            for idx, txout in enumerate(tx.outputs):
-                # Get the hashX. Ignore unspendable outputs.
-                hashX = script_hashX(txout.pk_script)
-                if hashX:
-                    add_hashXs(hashX)
-                    put_utxo(tx_hash + s_pack('<H', idx),
-                             hashX + tx_numb + s_pack('<Q', txout.value))
-            tx_num += 1
-
-        # Spend the inputs
-        # A separate for-loop here allows any tx ordering in block.
-        for (tx, tx_hash), hashXs in zip(txs, hashXs_by_tx):
-            add_hashXs = hashXs.add
-            for txin in tx.inputs:
-                if txin.is_generation():
-                    continue
-                cache_value = spend_utxo(txin.prev_hash, txin.prev_idx)
-                undo_info_append(cache_value)
-                add_hashXs(cache_value[:-12])
-
-        # Update touched set for notifications
-        for hashXs in hashXs_by_tx:
-            update_touched(hashXs)
-
-        self.db.history.add_unflushed(hashXs_by_tx, self.tx_count)
-
-        self.tx_count = tx_num
-        self.db.tx_counts.append(tx_num)
-
-        return undo_info
-
-    def backup_txs(self, txs):
-        undo_info = self.db.read_undo_info(self.height)
-        if undo_info is None:
-            raise ChainError('no undo information found for height {:,d}'
-                             .format(self.height))
-
-        # Use local vars for speed in the loops
-        s_pack = pack
-        put_utxo = self.utxo_cache.__setitem__
-        spend_utxo = self.spend_utxo
-        script_hashX = self.coin.hashX_from_script
-        add_touched = self.touched.add
-        undo_entry_len = 12 + HASHX_LEN
-
-        # Restore coins that had been spent
-        # (may include coins made then spent in this block)
-        n = 0
-        for tx, tx_hash in txs:
-            for txin in tx.inputs:
-                if txin.is_generation():
-                    continue
-                undo_item = undo_info[n:n + undo_entry_len]
-                put_utxo(txin.prev_hash + s_pack('<H', txin.prev_idx),
-                         undo_item)
-                add_touched(undo_item[:-12])
-                n += undo_entry_len
-
-        assert n == len(undo_info)
-
-        # Remove tx outputs made in this block, by spending them.
-        for tx, tx_hash in txs:
-            for idx, txout in enumerate(tx.outputs):
-                hashX = script_hashX(txout.pk_script)
-                if hashX:
-                    # Be careful with unspendable outputs- we didn't save those
-                    # in the first place.
-                    cache_value = spend_utxo(tx_hash, idx)
-                    add_touched(cache_value[:-12])
-
-        self.tx_count -= len(txs)
->>>>>>> remotes/upstream/master

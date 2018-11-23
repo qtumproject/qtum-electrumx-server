@@ -124,14 +124,9 @@ class SessionManager(object):
         self.cur_group = SessionGroup(0)
         self.txs_sent = 0
         self.start_time = time.time()
-<<<<<<< HEAD
-        self._history_cache = pylru.lrucache(256)
-        self._hc_height = 0
         self._eventlog_cache = pylru.lrucache(256)  # { hashY => [txnum, log_index] }
-=======
         self.history_cache = pylru.lrucache(256)
         self.notified_height = None
->>>>>>> remotes/upstream/master
         # Cache some idea of room to avoid recounting on each subscription
         self.subs_room = 0
         # Masternode stuff only for such coins
@@ -573,19 +568,14 @@ class SessionManager(object):
             for hashX in set(hc).intersection(touched):
                 del hc[hashX]
 
-<<<<<<< HEAD
         # clear eventlog cache
         ec = self._eventlog_cache
-        for hashY in set(ec).intersection(eventlog_touched):
-            del ec[hashY]
+        if eventlog_touched is not None:
+            for hashY in set(ec).intersection(eventlog_touched):
+                del ec[hashY]
 
-        async with TaskGroup() as group:
-            for session in self.sessions:
-                await group.spawn(session.notify(height, touched, eventlog_touched))
-=======
         for session in self.sessions:
-            await session.spawn(session.notify, touched, height_changed)
->>>>>>> remotes/upstream/master
+            await session.spawn(session.notify, touched, eventlog_touched, height_changed)
 
     def add_session(self, session):
         self.sessions.add(session)
@@ -647,11 +637,7 @@ class SessionBase(RPCSession):
         self._receive_message_orig = self.connection.receive_message
         self.connection.receive_message = self.receive_message
 
-<<<<<<< HEAD
-    async def notify(self, height, touched, eventlog_touched):
-=======
-    async def notify(self, touched, height_changed):
->>>>>>> remotes/upstream/master
+    async def notify(self, touched, eventlog_touched, height_changed):
         pass
 
     def peer_address_str(self, *, for_log=True):
@@ -729,13 +715,8 @@ class SessionBase(RPCSession):
 class ElectrumX(SessionBase):
     '''A TCP server that handles incoming Electrum connections.'''
 
-<<<<<<< HEAD
-    PROTOCOL_MIN = (1, 1)
-    PROTOCOL_MAX = (1, 5)
-=======
     PROTOCOL_MIN = (1, 2)
-    PROTOCOL_MAX = (1, 4)
->>>>>>> remotes/upstream/master
+    PROTOCOL_MAX = (1, 5)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -747,11 +728,8 @@ class ElectrumX(SessionBase):
         self.sv_seen = False
         self.mempool_statuses = {}
         self.set_request_handlers(self.PROTOCOL_MIN)
-<<<<<<< HEAD
-        self.db_height = self.chain_state.db_height
         self.contract_subs = {}  # hashY+topic_name: (hash160, contract_addr, topic)
-=======
->>>>>>> remotes/upstream/master
+
 
     @classmethod
     def protocol_min_max_strings(cls):
@@ -786,54 +764,8 @@ class ElectrumX(SessionBase):
     def sub_count(self):
         return len(self.hashX_subs)
 
-<<<<<<< HEAD
-    async def notify_touched(self, our_touched, our_eventlog_touched):
-        if our_eventlog_touched:
-            for hashY in our_eventlog_touched:
-                hash160, contract_addr, topic = self.contract_subs[hashY]
-                contract_status = await self.hash160_contract_status(hash160, contract_addr, topic)
-                # 1.3
-                method = 'blockchain.hash160.contract.subscribe'
-                await self.send_notification(method, (hash160, contract_addr, contract_status))
-                # 1.4
-                method = 'blockchain.contract.event.subscribe'
-                await self.send_notification(method, (hash160, contract_addr, topic, contract_status))
-
-        changed = {}
-
-        for hashX in our_touched:
-            alias = self.hashX_subs[hashX]
-            status = await self.address_status(hashX)
-            changed[alias] = status
-
-        # Check mempool hashXs - the status is a function of the
-        # confirmed state of other transactions.  Note: we cannot
-        # iterate over mempool_statuses as it changes size.
-        for hashX in tuple(self.mempool_statuses):
-            # Items can be evicted whilst await-ing below; False
-            # ensures such hashXs are notified
-            old_status = self.mempool_statuses.get(hashX, False)
-            status = await self.address_status(hashX)
-            if status != old_status:
-                alias = self.hashX_subs[hashX]
-                changed[alias] = status
-
-        for alias, status in changed.items():
-            if len(alias) == 64:
-                method = 'blockchain.scripthash.subscribe'
-            else:
-                method = 'blockchain.address.subscribe'
-            await self.send_notification(method, (alias, status))
-
-        if changed:
-            es = '' if len(changed) == 1 else 'es'
-            self.logger.info('notified of {:,d} address{}'
-                             .format(len(changed), es))
-
-    async def notify(self, height, touched, eventlog_touched):
-=======
-    async def notify(self, touched, height_changed):
->>>>>>> remotes/upstream/master
+    async def notify(self, touched, eventlog_touched, height_changed):
+        # todo codeface
         '''Notify the client about changes to touched addresses (from mempool
         updates or new blocks) and height.
         '''
@@ -842,25 +774,8 @@ class ElectrumX(SessionBase):
             await self.send_notification('blockchain.headers.subscribe', args)
 
         touched = touched.intersection(self.hashX_subs)
-<<<<<<< HEAD
-
-        if eventlog_touched:
-            our_eventlog_touched = eventlog_touched.intersection(self.contract_subs)
-        else:
-            our_eventlog_touched = set()
-
-        if touched or (height_changed and self.mempool_statuses) or our_eventlog_touched:
-            await self.notify_touched(touched, our_eventlog_touched)
-
-    def assert_boolean(self, value):
-        '''Return param value it is boolean otherwise raise an RPCError.'''
-        if value in (False, True):
-            return value
-        raise RPCError(BAD_REQUEST, f'{value} should be a boolean value')
-=======
         if touched or (height_changed and self.mempool_statuses):
             changed = {}
->>>>>>> remotes/upstream/master
 
             for hashX in touched:
                 alias = self.hashX_subs[hashX]
@@ -1350,7 +1265,7 @@ class ElectrumX(SessionBase):
     async def contract_event_get_history(self, hash160, contract_addr, topic):
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
         hashY = hashY + topic.encode()
-        eventlogs = await self.session_mgr.get_eventlogs(hashY)
+        eventlogs = await self.session_mgr.limited_eventlog(hashY)
         conf = [{'tx_hash': hash_to_hex_str(tx_hash),
                  'height': height,
                  'log_index': log_index}

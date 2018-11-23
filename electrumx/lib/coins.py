@@ -386,20 +386,6 @@ class BitcoinCash(BitcoinMixin, Coin):
     ]
 
 
-class BitcoinCashABC(BitcoinMixin, Coin):
-    NAME = "BitcoinCashABC"
-    SHORTNAME = "BCH"
-    TX_COUNT = 265479628
-    TX_COUNT_HEIGHT = 556592
-    TX_PER_BLOCK = 400
-    PEERS = [
-        'bch.imaginary.cash s t',
-        'electroncash.dk s t',
-        'wallet.satoshiscoffeehouse.com s t',
-    ]
-    BLOCK_PROCESSOR = block_proc.LTORBlockProcessor
-
-
 class BitcoinSegwit(BitcoinMixin, Coin):
     NAME = "BitcoinSegwit"
     DESERIALIZER = lib_tx.DeserializerSegWit
@@ -705,140 +691,6 @@ class ViacoinTestnet(Viacoin):
 class ViacoinTestnetSegWit(ViacoinTestnet):
     NET = "testnet-segwit"
     DESERIALIZER = lib_tx.DeserializerSegWit
-
-
-# Source: namecoin.org
-class Namecoin(AuxPowMixin, Coin):
-    NAME = "Namecoin"
-    SHORTNAME = "NMC"
-    NET = "mainnet"
-    XPUB_VERBYTES = bytes.fromhex("d7dd6370")
-    XPRV_VERBYTES = bytes.fromhex("d7dc6e31")
-    P2PKH_VERBYTE = bytes.fromhex("34")
-    P2SH_VERBYTES = [bytes.fromhex("0d")]
-    WIF_BYTE = bytes.fromhex("e4")
-    GENESIS_HASH = ('000000000062b72c5e2ceb45fbc8587e'
-                    '807c155b0da735e6483dfba2f0a9c770')
-    TX_COUNT = 4415768
-    TX_COUNT_HEIGHT = 329065
-    TX_PER_BLOCK = 10
-    PEERS = [
-        'elec.luggs.co s446',
-    ]
-    BLOCK_PROCESSOR = block_proc.NamecoinBlockProcessor
-
-    @classmethod
-    def split_name_script(cls, script):
-        from electrumx.lib.script import _match_ops, Script, ScriptError
-
-        try:
-            ops = Script.get_ops(script)
-        except ScriptError:
-            return None, script
-
-        match = _match_ops
-
-        # Name opcodes
-        OP_NAME_NEW = OpCodes.OP_1
-        OP_NAME_FIRSTUPDATE = OpCodes.OP_2
-        OP_NAME_UPDATE = OpCodes.OP_3
-
-        # Opcode sequences for name operations
-        NAME_NEW_OPS = [OP_NAME_NEW, -1, OpCodes.OP_2DROP]
-        NAME_FIRSTUPDATE_OPS = [OP_NAME_FIRSTUPDATE, -1, -1, -1,
-                                OpCodes.OP_2DROP, OpCodes.OP_2DROP]
-        NAME_UPDATE_OPS = [OP_NAME_UPDATE, -1, -1, OpCodes.OP_2DROP,
-                           OpCodes.OP_DROP]
-
-        name_script_op_count = None
-        name_pushdata = None
-
-        # Detect name operations; determine count of opcodes.
-        # Also extract the name field -- we might use that for something in a
-        # future version.
-        if match(ops[:len(NAME_NEW_OPS)], NAME_NEW_OPS):
-            name_script_op_count = len(NAME_NEW_OPS)
-        elif match(ops[:len(NAME_FIRSTUPDATE_OPS)], NAME_FIRSTUPDATE_OPS):
-            name_script_op_count = len(NAME_FIRSTUPDATE_OPS)
-            name_pushdata = ops[1]
-        elif match(ops[:len(NAME_UPDATE_OPS)], NAME_UPDATE_OPS):
-            name_script_op_count = len(NAME_UPDATE_OPS)
-            name_pushdata = ops[1]
-
-        if name_script_op_count is None:
-            return None, script
-
-        # Find the end position of the name data
-        n = 0
-        for i in range(name_script_op_count):
-            # Content of this loop is copied from Script.get_ops's loop
-            op = script[n]
-            n += 1
-
-            if op <= OpCodes.OP_PUSHDATA4:
-                # Raw bytes follow
-                if op < OpCodes.OP_PUSHDATA1:
-                    dlen = op
-                elif op == OpCodes.OP_PUSHDATA1:
-                    dlen = script[n]
-                    n += 1
-                elif op == OpCodes.OP_PUSHDATA2:
-                    dlen, = struct.unpack('<H', script[n: n + 2])
-                    n += 2
-                else:
-                    dlen, = struct.unpack('<I', script[n: n + 4])
-                    n += 4
-                if n + dlen > len(script):
-                    raise IndexError
-                op = (op, script[n:n + dlen])
-                n += dlen
-        # Strip the name data to yield the address script
-        address_script = script[n:]
-
-        if name_pushdata is None:
-            return None, address_script
-
-        normalized_name_op_script = bytearray()
-        normalized_name_op_script.append(OP_NAME_UPDATE)
-        normalized_name_op_script.extend(Script.push_data(name_pushdata[1]))
-        normalized_name_op_script.extend(Script.push_data(bytes([])))
-        normalized_name_op_script.append(OpCodes.OP_2DROP)
-        normalized_name_op_script.append(OpCodes.OP_DROP)
-        normalized_name_op_script.append(OpCodes.OP_RETURN)
-
-        return bytes(normalized_name_op_script), address_script
-
-    @classmethod
-    def hashX_from_script(cls, script):
-        name_op_script, address_script = cls.split_name_script(script)
-
-        return super().hashX_from_script(address_script)
-
-    @classmethod
-    def address_from_script(cls, script):
-        name_op_script, address_script = cls.split_name_script(script)
-
-        return super().address_from_script(address_script)
-
-    @classmethod
-    def name_hashX_from_script(cls, script):
-        name_op_script, address_script = cls.split_name_script(script)
-
-        if name_op_script is None:
-            return None
-
-        return super().hashX_from_script(name_op_script)
-
-
-class NamecoinTestnet(Namecoin):
-    NAME = "Namecoin"
-    SHORTNAME = "XNM"
-    NET = "testnet"
-    P2PKH_VERBYTE = bytes.fromhex("6f")
-    P2SH_VERBYTES = [bytes.fromhex("c4")]
-    WIF_BYTE = bytes.fromhex("ef")
-    GENESIS_HASH = ('00000007199508e34a9ff81e6ec0c477'
-                    'a4cccff2a4767a8eee39c11db367b008')
 
 
 class Dogecoin(AuxPowMixin, Coin):
@@ -1770,81 +1622,6 @@ class BitcoinAtom(Coin):
         deserializer = cls.DESERIALIZER(block)
         return deserializer.read_header(height, cls.BASIC_HEADER_SIZE)
 
-
-class Decred(Coin):
-    NAME = "Decred"
-    SHORTNAME = "DCR"
-    NET = "mainnet"
-    XPUB_VERBYTES = bytes.fromhex("02fda926")
-    XPRV_VERBYTES = bytes.fromhex("02fda4e8")
-    P2PKH_VERBYTE = bytes.fromhex("073f")
-    P2SH_VERBYTES = [bytes.fromhex("071a")]
-    WIF_BYTE = bytes.fromhex("22de")
-    GENESIS_HASH = ('298e5cc3d985bfe7f81dc135f360abe0'
-                    '89edd4396b86d2de66b0cef42b21d980')
-    BASIC_HEADER_SIZE = 180
-    HEADER_HASH = lib_tx.DeserializerDecred.blake256
-    DESERIALIZER = lib_tx.DeserializerDecred
-    DAEMON = daemon.DecredDaemon
-    BLOCK_PROCESSOR = block_proc.DecredBlockProcessor
-    ENCODE_CHECK = partial(Base58.encode_check,
-                           hash_fn=lib_tx.DeserializerDecred.blake256d)
-    DECODE_CHECK = partial(Base58.decode_check,
-                           hash_fn=lib_tx.DeserializerDecred.blake256d)
-    HEADER_VALUES = ('version', 'prev_block_hash', 'merkle_root', 'stake_root',
-                     'vote_bits', 'final_state', 'voters', 'fresh_stake',
-                     'revocations', 'pool_size', 'bits', 'sbits',
-                     'block_height', 'size', 'timestamp', 'nonce',
-                     'extra_data', 'stake_version')
-    HEADER_UNPACK = struct.Struct(
-        '< i 32s 32s 32s H 6s H B B I I Q I I I I 32s I').unpack_from
-    TX_COUNT = 4629388
-    TX_COUNT_HEIGHT = 260628
-    TX_PER_BLOCK = 17
-    REORG_LIMIT = 1000
-    RPC_PORT = 9109
-
-    @classmethod
-    def header_hash(cls, header):
-        '''Given a header return the hash.'''
-        return cls.HEADER_HASH(header)
-
-    @classmethod
-    def block(cls, raw_block, height):
-        '''Return a Block namedtuple given a raw block and its height.'''
-        if height > 0:
-            return super().block(raw_block, height)
-        else:
-            return Block(raw_block, cls.block_header(raw_block, height), [])
-
-    @classmethod
-    def electrum_header(cls, header, height):
-        h = super().electrum_header(header, height)
-        h['stake_root'] = hash_to_hex_str(h['stake_root'])
-        h['final_state'] = hash_to_hex_str(h['final_state'])
-        h['extra_data'] = hash_to_hex_str(h['extra_data'])
-        return h
-
-
-class DecredTestnet(Decred):
-    SHORTNAME = "tDCR"
-    NET = "testnet"
-    XPUB_VERBYTES = bytes.fromhex("043587d1")
-    XPRV_VERBYTES = bytes.fromhex("04358397")
-    P2PKH_VERBYTE = bytes.fromhex("0f21")
-    P2SH_VERBYTES = [bytes.fromhex("0efc")]
-    WIF_BYTE = bytes.fromhex("230e")
-    GENESIS_HASH = (
-        'a649dce53918caf422e9c711c858837e08d626ecfcd198969b24f7b634a49bac')
-    BASIC_HEADER_SIZE = 180
-    ALLOW_ADVANCING_ERRORS = True
-    TX_COUNT = 217380620
-    TX_COUNT_HEIGHT = 464000
-    TX_PER_BLOCK = 1800
-    REORG_LIMIT = 1000
-    RPC_PORT = 19109
-
-
 class Axe(Dash):
     NAME = "Axe"
     SHORTNAME = "AXE"
@@ -2172,7 +1949,6 @@ class GroestlcoinTestnet(Groestlcoin):
     ]
 
 
-<<<<<<< HEAD
 class Qtum(Coin):
     NAME = "Qtum"
     SHORTNAME = "Qtum"
