@@ -40,12 +40,13 @@ import base64
 
 import electrumx.lib.util as util
 from electrumx.lib.hash import Base58, hash160, double_sha256, hash_to_hex_str
-from electrumx.lib.hash import HASHX_LEN
+from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash
 from electrumx.lib.script import ScriptPubKey, OpCodes
 import electrumx.lib.tx as lib_tx
 import electrumx.server.block_processor as block_proc
 import electrumx.server.daemon as daemon
-from electrumx.server.session import ElectrumX, DashElectrumX
+from electrumx.server.session import (ElectrumX, DashElectrumX,
+                                      SmartCashElectrumX)
 
 
 Block = namedtuple("Block", "raw header transactions")
@@ -70,6 +71,9 @@ class Coin(object):
     DESERIALIZER = lib_tx.Deserializer
     DAEMON = daemon.Daemon
     BLOCK_PROCESSOR = block_proc.BlockProcessor
+    HEADER_VALUES = ('version', 'prev_block_hash', 'merkle_root', 'timestamp',
+                     'bits', 'nonce')
+    HEADER_UNPACK = struct.Struct('< I 32s 32s I I I').unpack_from
     MEMPOOL_HISTOGRAM_REFRESH_SECS = 500
     XPUB_VERBYTES = bytes('????', 'utf-8')
     XPRV_VERBYTES = bytes('????', 'utf-8')
@@ -112,10 +116,6 @@ class Coin(object):
         return url + '/'
 
     @classmethod
-    def daemon_urls(cls, urls):
-        return [cls.sanitize_url(url) for url in urls.split(',')]
-
-    @classmethod
     def genesis_block(cls, block):
         '''Check the Genesis block is the right one for this coin.
 
@@ -137,21 +137,6 @@ class Coin(object):
         if script and script[0] == OP_RETURN:
             return None
         return sha256(script).digest()[:HASHX_LEN]
-
-    @util.cachedproperty
-    def address_handlers(cls):
-        return ScriptPubKey.PayToHandlers(
-            address=cls.P2PKH_address_from_hash160,
-            script_hash=cls.P2SH_address_from_hash160,
-            pubkey=cls.P2PKH_address_from_pubkey,
-            unspendable=lambda: None,
-            strange=lambda script: None,
-        )
-
-    @classmethod
-    def address_from_script(cls, script):
-        '''Given a pk_script, return the adddress it pays to, or None.'''
-        return ScriptPubKey.pay_to(cls.address_handlers, script)
 
     @staticmethod
     def lookup_xverbytes(verbytes):
@@ -187,29 +172,12 @@ class Coin(object):
         return cls.ENCODE_CHECK(cls.P2SH_VERBYTES[0] + hash160)
 
     @classmethod
-    def multisig_address(cls, m, pubkeys):
-        '''Return the P2SH address for an M of N multisig transaction.
-
-        Pass the N pubkeys of which M are needed to sign it.  If
-        generating an address for a wallet, it is the caller's
-        responsibility to sort them to ensure order does not matter
-        for, e.g., wallet recovery.
-        '''
-        script = cls.pay_to_multisig_script(m, pubkeys)
-        return cls.P2SH_address_from_hash160(hash160(script))
+    def hash160_to_P2PKH_script(cls, hash160):
+        return ScriptPubKey.P2PKH_script(hash160)
 
     @classmethod
-    def pay_to_multisig_script(cls, m, pubkeys):
-        '''Return a P2SH script for an M of N multisig transaction.'''
-        return ScriptPubKey.multisig_script(m, pubkeys)
-
-    @classmethod
-    def pay_to_pubkey_script(cls, pubkey):
-        '''Return a pubkey script that pays to a pubkey.
-
-        Pass the raw pubkey bytes (length 33 or 65).
-        '''
-        return ScriptPubKey.P2PK_script(pubkey)
+    def hash160_to_P2PKH_hashX(cls, hash160):
+        return cls.hashX_from_script(cls.hash160_to_P2PKH_script(hash160))
 
     @classmethod
     def pay_to_address_script(cls, address):
@@ -223,12 +191,12 @@ class Coin(object):
         verbyte = -1
         verlen = len(raw) - 20
         if verlen > 0:
-            verbyte, hash_bytes = raw[:verlen], raw[verlen:]
+            verbyte, hash160 = raw[:verlen], raw[verlen:]
 
         if verbyte == cls.P2PKH_VERBYTE:
-            return ScriptPubKey.P2PKH_script(hash_bytes)
+            return cls.hash160_to_P2PKH_script(hash160)
         if verbyte in cls.P2SH_VERBYTES:
-            return ScriptPubKey.P2SH_script(hash_bytes)
+            return ScriptPubKey.P2SH_script(hash160)
 
         raise CoinError('invalid address: {}'.format(address))
 
@@ -288,18 +256,13 @@ class Coin(object):
 
     @classmethod
     def electrum_header(cls, header, height):
-        version, = struct.unpack('<I', header[:4])
-        timestamp, bits, nonce = struct.unpack('<III', header[68:80])
-
-        return {
-            'block_height': height,
-            'version': version,
-            'prev_block_hash': hash_to_hex_str(header[4:36]),
-            'merkle_root': hash_to_hex_str(header[36:68]),
-            'timestamp': timestamp,
-            'bits': bits,
-            'nonce': nonce,
-        }
+        h = dict(zip(cls.HEADER_VALUES, cls.HEADER_UNPACK(header)))
+        # Add the height that is not present in the header itself
+        h['block_height'] = height
+        # Convert bytes to str
+        h['prev_block_hash'] = hash_to_hex_str(h['prev_block_hash'])
+        h['merkle_root'] = hash_to_hex_str(h['merkle_root'])
+        return h
 
     @classmethod
     def hash160_contract_to_hashY(cls, hash160, contract_addr):
@@ -329,21 +292,21 @@ class EquihashMixin(object):
     STATIC_BLOCK_HEADERS = False
     BASIC_HEADER_SIZE = 140  # Excluding Equihash solution
     DESERIALIZER = lib_tx.DeserializerEquihash
+    HEADER_VALUES = ('version', 'prev_block_hash', 'merkle_root', 'reserved',
+                     'timestamp', 'bits', 'nonce')
+    HEADER_UNPACK = struct.Struct('< I 32s 32s 32s I I 32s').unpack_from
 
     @classmethod
     def electrum_header(cls, header, height):
-        version, = struct.unpack('<I', header[:4])
-        timestamp, bits = struct.unpack('<II', header[100:108])
-
-        return {
-            'block_height': height,
-            'version': version,
-            'prev_block_hash': hash_to_hex_str(header[4:36]),
-            'merkle_root': hash_to_hex_str(header[36:68]),
-            'timestamp': timestamp,
-            'bits': bits,
-            'nonce': hash_to_hex_str(header[108:140]),
-        }
+        h = dict(zip(cls.HEADER_VALUES, cls.HEADER_UNPACK(header)))
+        # Add the height that is not present in the header itself
+        h['block_height'] = height
+        # Convert bytes to str
+        h['prev_block_hash'] = hash_to_hex_str(h['prev_block_hash'])
+        h['merkle_root'] = hash_to_hex_str(h['merkle_root'])
+        h['reserved'] = hash_to_hex_str(h['reserved'])
+        h['nonce'] = hash_to_hex_str(h['nonce'])
+        return h
 
     @classmethod
     def block_header(cls, block, height):
@@ -364,7 +327,7 @@ class ScryptMixin(object):
             import scrypt
             cls.HEADER_HASH = lambda x: scrypt.hash(x, x, 1024, 1, 1, 32)
 
-        version, = struct.unpack('<I', header[:4])
+        version, = util.unpack_le_uint32_from(header)
         if version > 6:
             return super().header_hash(header)
         else:
@@ -412,20 +375,29 @@ class HOdlcoin(Coin):
 class BitcoinCash(BitcoinMixin, Coin):
     NAME = "BitcoinCash"
     SHORTNAME = "BCH"
-    TX_COUNT = 246362688
-    TX_COUNT_HEIGHT = 511484
+    TX_COUNT = 267318795
+    TX_COUNT_HEIGHT = 557037
     TX_PER_BLOCK = 400
     PEERS = [
-        'electroncash.cascharia.com s50002',
         'bch.electrumx.cash s t',
-        'bccarihace4jdcnt.onion t52001 s52002',
-        'abc1.hsmiths.com t60001 s60002',
-        'electroncash.checksum0.com s t',
-        'electrumx-cash.1209k.com s t',
-        'electrum.leblancnet.us t50011 s50012',
-        'electroncash.dk s t',
-        'electrum.imaginary.cash s t',
+        'sv1.hsmiths.com t60003 s60004',
+        'satoshi.vision.cash s',
+        'electroncash.cascharia.com s t',
     ]
+
+
+class BitcoinCashABC(BitcoinMixin, Coin):
+    NAME = "BitcoinCashABC"
+    SHORTNAME = "BCH"
+    TX_COUNT = 265479628
+    TX_COUNT_HEIGHT = 556592
+    TX_PER_BLOCK = 400
+    PEERS = [
+        'bch.imaginary.cash s t',
+        'electroncash.dk s t',
+        'wallet.satoshiscoffeehouse.com s t',
+    ]
+    BLOCK_PROCESSOR = block_proc.LTORBlockProcessor
 
 
 class BitcoinSegwit(BitcoinMixin, Coin):
@@ -440,7 +412,6 @@ class BitcoinSegwit(BitcoinMixin, Coin):
         'E-X.not.fyi s t',
         'elec.luggs.co s443',
         'electrum.vom-stausee.de s t',
-        'electrum3.hachre.de s t',
         'electrum.hsmiths.com s t',
         'helicarrier.bauerj.eu s t',
         'hsmiths4fyqlw5xw.onion s t',
@@ -474,8 +445,7 @@ class BitcoinGold(EquihashMixin, BitcoinMixin, Coin):
     @classmethod
     def header_hash(cls, header):
         '''Given a header return hash'''
-        height, = struct.unpack('<I', header[68:72])
-
+        height, = util.unpack_le_uint32_from(header, 68)
         if height >= cls.FORK_HEIGHT:
             return double_sha256(header)
         else:
@@ -483,18 +453,9 @@ class BitcoinGold(EquihashMixin, BitcoinMixin, Coin):
 
     @classmethod
     def electrum_header(cls, header, height):
-        h = dict(
-            block_height=height,
-            version=struct.unpack('<I', header[:4])[0],
-            prev_block_hash=hash_to_hex_str(header[4:36]),
-            merkle_root=hash_to_hex_str(header[36:68]),
-            timestamp=struct.unpack('<I', header[100:104])[0],
-            reserved=hash_to_hex_str(header[72:100]),
-            bits=struct.unpack('<I', header[104:108])[0],
-            nonce=hash_to_hex_str(header[108:140]),
-            solution=hash_to_hex_str(header[140:])
-        )
-
+        h = super().electrum_header(header, height)
+        h['reserved'] = hash_to_hex_str(header[72:100])
+        h['solution'] = hash_to_hex_str(header[140:])
         return h
 
 
@@ -764,6 +725,109 @@ class Namecoin(AuxPowMixin, Coin):
     PEERS = [
         'elec.luggs.co s446',
     ]
+    BLOCK_PROCESSOR = block_proc.NamecoinBlockProcessor
+
+    @classmethod
+    def split_name_script(cls, script):
+        from electrumx.lib.script import _match_ops, Script, ScriptError
+
+        try:
+            ops = Script.get_ops(script)
+        except ScriptError:
+            return None, script
+
+        match = _match_ops
+
+        # Name opcodes
+        OP_NAME_NEW = OpCodes.OP_1
+        OP_NAME_FIRSTUPDATE = OpCodes.OP_2
+        OP_NAME_UPDATE = OpCodes.OP_3
+
+        # Opcode sequences for name operations
+        NAME_NEW_OPS = [OP_NAME_NEW, -1, OpCodes.OP_2DROP]
+        NAME_FIRSTUPDATE_OPS = [OP_NAME_FIRSTUPDATE, -1, -1, -1,
+                                OpCodes.OP_2DROP, OpCodes.OP_2DROP]
+        NAME_UPDATE_OPS = [OP_NAME_UPDATE, -1, -1, OpCodes.OP_2DROP,
+                           OpCodes.OP_DROP]
+
+        name_script_op_count = None
+        name_pushdata = None
+
+        # Detect name operations; determine count of opcodes.
+        # Also extract the name field -- we might use that for something in a
+        # future version.
+        if match(ops[:len(NAME_NEW_OPS)], NAME_NEW_OPS):
+            name_script_op_count = len(NAME_NEW_OPS)
+        elif match(ops[:len(NAME_FIRSTUPDATE_OPS)], NAME_FIRSTUPDATE_OPS):
+            name_script_op_count = len(NAME_FIRSTUPDATE_OPS)
+            name_pushdata = ops[1]
+        elif match(ops[:len(NAME_UPDATE_OPS)], NAME_UPDATE_OPS):
+            name_script_op_count = len(NAME_UPDATE_OPS)
+            name_pushdata = ops[1]
+
+        if name_script_op_count is None:
+            return None, script
+
+        # Find the end position of the name data
+        n = 0
+        for i in range(name_script_op_count):
+            # Content of this loop is copied from Script.get_ops's loop
+            op = script[n]
+            n += 1
+
+            if op <= OpCodes.OP_PUSHDATA4:
+                # Raw bytes follow
+                if op < OpCodes.OP_PUSHDATA1:
+                    dlen = op
+                elif op == OpCodes.OP_PUSHDATA1:
+                    dlen = script[n]
+                    n += 1
+                elif op == OpCodes.OP_PUSHDATA2:
+                    dlen, = struct.unpack('<H', script[n: n + 2])
+                    n += 2
+                else:
+                    dlen, = struct.unpack('<I', script[n: n + 4])
+                    n += 4
+                if n + dlen > len(script):
+                    raise IndexError
+                op = (op, script[n:n + dlen])
+                n += dlen
+        # Strip the name data to yield the address script
+        address_script = script[n:]
+
+        if name_pushdata is None:
+            return None, address_script
+
+        normalized_name_op_script = bytearray()
+        normalized_name_op_script.append(OP_NAME_UPDATE)
+        normalized_name_op_script.extend(Script.push_data(name_pushdata[1]))
+        normalized_name_op_script.extend(Script.push_data(bytes([])))
+        normalized_name_op_script.append(OpCodes.OP_2DROP)
+        normalized_name_op_script.append(OpCodes.OP_DROP)
+        normalized_name_op_script.append(OpCodes.OP_RETURN)
+
+        return bytes(normalized_name_op_script), address_script
+
+    @classmethod
+    def hashX_from_script(cls, script):
+        name_op_script, address_script = cls.split_name_script(script)
+
+        return super().hashX_from_script(address_script)
+
+    @classmethod
+    def address_from_script(cls, script):
+        name_op_script, address_script = cls.split_name_script(script)
+
+        return super().address_from_script(address_script)
+
+    @classmethod
+    def name_hashX_from_script(cls, script):
+        name_op_script, address_script = cls.split_name_script(script)
+
+        if name_op_script is None:
+            return None
+
+        return super().hashX_from_script(name_op_script)
 
 
 class NamecoinTestnet(Namecoin):
@@ -947,6 +1011,9 @@ class FairCoin(Coin):
     GENESIS_HASH = ('beed44fa5e96150d95d56ebd5d262578'
                     '1825a9407a5215dd7eda723373a0a1d7')
     BASIC_HEADER_SIZE = 108
+    HEADER_VALUES = ('version', 'prev_block_hash', 'merkle_root',
+                     'payload_hash', 'timestamp', 'creatorId')
+    HEADER_UNPACK = struct.Struct('< I 32s 32s 32s I I').unpack_from
     TX_COUNT = 505
     TX_COUNT_HEIGHT = 470
     TX_PER_BLOCK = 1
@@ -967,17 +1034,9 @@ class FairCoin(Coin):
 
     @classmethod
     def electrum_header(cls, header, height):
-        version, = struct.unpack('<I', header[:4])
-        timestamp, creatorId = struct.unpack('<II', header[100:108])
-        return {
-            'block_height': height,
-            'version': version,
-            'prev_block_hash': hash_to_hex_str(header[4:36]),
-            'merkle_root': hash_to_hex_str(header[36:68]),
-            'payload_hash': hash_to_hex_str(header[68:100]),
-            'timestamp': timestamp,
-            'creatorId': creatorId,
-        }
+        h = super().electrum_header(header, height)
+        h['payload_hash'] = hash_to_hex_str(h['payload_hash'])
+        return h
 
 
 class Zcash(EquihashMixin, Coin):
@@ -1030,21 +1089,10 @@ class SnowGem(EquihashMixin, Coin):
 
     @classmethod
     def electrum_header(cls, header, height):
-        version, = struct.unpack('<I', header[:4])
-        timestamp, bits = struct.unpack('<II', header[100:108])
-
-        return {
-            'block_height': height,
-            'version': version,
-            'prev_block_hash': hash_to_hex_str(header[4:36]),
-            'merkle_root': hash_to_hex_str(header[36:68]),
-            'hash_reserved': hash_to_hex_str(header[68:100]),
-            'timestamp': timestamp,
-            'bits': bits,
-            'nonce': hash_to_hex_str(header[108:140]),
-            'n_solution': base64.b64encode(lib_tx.Deserializer(
-                header, start=140)._read_varbytes()).decode('utf8')
-        }
+        h = super().electrum_header(header, height)
+        h['n_solution'] = base64.b64encode(lib_tx.Deserializer(
+            header, start=140)._read_varbytes()).decode('utf8')
+        return h
 
 
 class BitcoinZ(EquihashMixin, Coin):
@@ -1078,6 +1126,23 @@ class Hush(EquihashMixin, Coin):
     TX_COUNT_HEIGHT = 68379
     TX_PER_BLOCK = 5
     RPC_PORT = 8822
+    REORG_LIMIT = 800
+
+
+class ZelCash(EquihashMixin, Coin):
+    NAME = "ZelCash"
+    SHORTNAME = "ZEL"
+    NET = "mainnet"
+    P2PKH_VERBYTE = bytes.fromhex("1CB8")
+    P2SH_VERBYTES = [bytes.fromhex("1CBD")]
+    WIF_BYTE = bytes.fromhex("80")
+    GENESIS_HASH = ('00052461a5006c2e3b74ce48992a0869'
+                    '5607912d5604c3eb8da25749b0900444')
+    DESERIALIZER = lib_tx.DeserializerZcash
+    TX_COUNT = 450539
+    TX_COUNT_HEIGHT = 167114
+    TX_PER_BLOCK = 3
+    RPC_PORT = 16124
     REORG_LIMIT = 800
 
 
@@ -1245,6 +1310,31 @@ class Reddcoin(Coin):
     RPC_PORT = 45443
 
 
+class TokenPay(ScryptMixin, Coin):
+    NAME = "TokenPay"
+    SHORTNAME = "TPAY"
+    NET = "mainnet"
+    P2PKH_VERBYTE = bytes.fromhex("41")
+    P2SH_VERBYTES = [bytes.fromhex("7e")]
+    WIF_BYTE = bytes.fromhex("b3")
+    GENESIS_HASH = ('000008b71ab32e585a23f0de642dc113'
+                    '740144e94c0ece047751e9781f953ae9')
+    DESERIALIZER = lib_tx.DeserializerTokenPay
+    DAEMON = daemon.LegacyRPCDaemon
+    TX_COUNT = 147934
+    TX_COUNT_HEIGHT = 73967
+    TX_PER_BLOCK = 100
+    RPC_PORT = 8800
+    REORG_LIMIT = 500
+    XPUB_VERBYTES = bytes.fromhex("0488B21E")
+    XPRV_VERBYTES = bytes.fromhex("0488ADE4")
+
+    PEERS = [
+        "electrum-us.tpay.ai s",
+        "electrum-eu.tpay.ai s",
+    ]
+
+
 class Vertcoin(Coin):
     NAME = "Vertcoin"
     SHORTNAME = "VTC"
@@ -1289,9 +1379,9 @@ class Monacoin(Coin):
         'electrumx2.monacoin.nl s t',
         'electrumx1.monacoin.ninja s t',
         'electrumx2.monacoin.ninja s t',
-        'electrumx1.movsign.info t',
         'electrumx2.movsign.info s t',
         'electrum-mona.bitbank.cc s t',
+        'ri7rzlmdaf4eqbza.onion s t',
     ]
 
 
@@ -1570,7 +1660,6 @@ class Newyorkcoin(AuxPowMixin, Coin):
     WIF_BYTE = bytes.fromhex("bc")
     GENESIS_HASH = ('5597f25c062a3038c7fd815fe46c67de'
                     'dfcb3c839fbc8e01ed4044540d08fe48')
-    DAEMON = daemon.LegacyRPCDaemon
     TX_COUNT = 5161944
     TX_COUNT_HEIGHT = 3948743
     TX_PER_BLOCK = 2
@@ -1585,7 +1674,6 @@ class NewyorkcoinTestnet(Newyorkcoin):
     WIF_BYTE = bytes.fromhex("f1")
     GENESIS_HASH = ('24463e4d3c625b0a9059f309044c2cf0'
                     'd7e196cf2a6ecce901f24f681be33c8f')
-    DAEMON = daemon.LegacyRPCDaemon
     TX_COUNT = 5161944
     TX_COUNT_HEIGHT = 3948743
     TX_PER_BLOCK = 2
@@ -1669,7 +1757,7 @@ class BitcoinAtom(Coin):
         header_to_be_hashed = header[:cls.BASIC_HEADER_SIZE]
         # New block header format has some extra flags in the end
         if len(header) == cls.HEADER_SIZE_POST_FORK:
-            flags, = struct.unpack('<I', header[-4:])
+            flags, = util.unpack_le_uint32_from(header, len(header) - 4)
             # Proof of work blocks have special serialization
             if flags & cls.BLOCK_PROOF_OF_STAKE != 0:
                 header_to_be_hashed += cls.BLOCK_PROOF_OF_STAKE_FLAGS
@@ -1691,7 +1779,7 @@ class Decred(Coin):
     XPRV_VERBYTES = bytes.fromhex("02fda4e8")
     P2PKH_VERBYTE = bytes.fromhex("073f")
     P2SH_VERBYTES = [bytes.fromhex("071a")]
-    WIF_BYTE = bytes.fromhex("230e")
+    WIF_BYTE = bytes.fromhex("22de")
     GENESIS_HASH = ('298e5cc3d985bfe7f81dc135f360abe0'
                     '89edd4396b86d2de66b0cef42b21d980')
     BASIC_HEADER_SIZE = 180
@@ -1703,7 +1791,13 @@ class Decred(Coin):
                            hash_fn=lib_tx.DeserializerDecred.blake256d)
     DECODE_CHECK = partial(Base58.decode_check,
                            hash_fn=lib_tx.DeserializerDecred.blake256d)
-    HEADER_UNPACK = struct.Struct('<i32s32s32sH6sHBBIIQIIII32sI').unpack_from
+    HEADER_VALUES = ('version', 'prev_block_hash', 'merkle_root', 'stake_root',
+                     'vote_bits', 'final_state', 'voters', 'fresh_stake',
+                     'revocations', 'pool_size', 'bits', 'sbits',
+                     'block_height', 'size', 'timestamp', 'nonce',
+                     'extra_data', 'stake_version')
+    HEADER_UNPACK = struct.Struct(
+        '< i 32s 32s 32s H 6s H B B I I Q I I I I 32s I').unpack_from
     TX_COUNT = 4629388
     TX_COUNT_HEIGHT = 260628
     TX_PER_BLOCK = 17
@@ -1725,21 +1819,30 @@ class Decred(Coin):
 
     @classmethod
     def electrum_header(cls, header, height):
-        labels = ('version', 'prev_block_hash', 'merkle_root', 'stake_root',
-                  'vote_bits', 'final_state', 'voters', 'fresh_stake',
-                  'revocations', 'pool_size', 'bits', 'sbits', 'block_height',
-                  'size', 'timestamp', 'nonce', 'extra_data', 'stake_version')
-        values = cls.HEADER_UNPACK(header)
-        h = dict(zip(labels, values))
-
-        # Convert some values
-        assert h['block_height'] == height
-        h['prev_block_hash'] = hash_to_hex_str(h['prev_block_hash'])
-        h['merkle_root'] = hash_to_hex_str(h['merkle_root'])
+        h = super().electrum_header(header, height)
         h['stake_root'] = hash_to_hex_str(h['stake_root'])
-        h['final_state'] = h['final_state'].hex()
-        h['extra_data'] = h['extra_data'].hex()
+        h['final_state'] = hash_to_hex_str(h['final_state'])
+        h['extra_data'] = hash_to_hex_str(h['extra_data'])
         return h
+
+
+class DecredTestnet(Decred):
+    SHORTNAME = "tDCR"
+    NET = "testnet"
+    XPUB_VERBYTES = bytes.fromhex("043587d1")
+    XPRV_VERBYTES = bytes.fromhex("04358397")
+    P2PKH_VERBYTE = bytes.fromhex("0f21")
+    P2SH_VERBYTES = [bytes.fromhex("0efc")]
+    WIF_BYTE = bytes.fromhex("230e")
+    GENESIS_HASH = (
+        'a649dce53918caf422e9c711c858837e08d626ecfcd198969b24f7b634a49bac')
+    BASIC_HEADER_SIZE = 180
+    ALLOW_ADVANCING_ERRORS = True
+    TX_COUNT = 217380620
+    TX_COUNT_HEIGHT = 464000
+    TX_PER_BLOCK = 1800
+    REORG_LIMIT = 1000
+    RPC_PORT = 19109
 
 
 class Axe(Dash):
@@ -1798,7 +1901,7 @@ class Xuez(Coin):
         Need to download `xevan_hash` module
         Source code: https://github.com/xuez/xuez
         '''
-        version, = struct.unpack('<I', header[:4])
+        version, = util.unpack_le_uint32_from(header)
 
         import xevan_hash
 
@@ -1809,29 +1912,10 @@ class Xuez(Coin):
 
     @classmethod
     def electrum_header(cls, header, height):
-        version, = struct.unpack('<I', header[:4])
-        timestamp, bits, nonce = struct.unpack('<III', header[68:80])
-        if version == 1:
-            return {
-                'block_height': height,
-                'version': version,
-                'prev_block_hash': hash_to_hex_str(header[4:36]),
-                'merkle_root': hash_to_hex_str(header[36:68]),
-                'timestamp': timestamp,
-                'bits': bits,
-                'nonce': nonce,
-            }
-        else:
-            return {
-                'block_height': height,
-                'version': version,
-                'prev_block_hash': hash_to_hex_str(header[4:36]),
-                'merkle_root': hash_to_hex_str(header[36:68]),
-                'timestamp': timestamp,
-                'bits': bits,
-                'nonce': nonce,
-                'nAccumulatorCheckpoint': hash_to_hex_str(header[80:112]),
-            }
+        h = super().electrum_header(header, height)
+        if h['version'] > 1:
+            h['nAccumulatorCheckpoint'] = hash_to_hex_str(header[80:])
+        return h
 
 
 class Pac(Coin):
@@ -1940,92 +2024,64 @@ class ColossusXT(Coin):
 
 
 class GoByte(Coin):
-        NAME = "GoByte"
-        SHORTNAME = "GBX"
-        NET = "mainnet"
-        XPUB_VERBYTES = bytes.fromhex("0488B21E")
-        XPRV_VERBYTES = bytes.fromhex("0488ADE4")
-        GENESIS_HASH = ('0000033b01055cf8df90b01a14734cae'
-                        '92f7039b9b0e48887b4e33a469d7bc07')
-        P2PKH_VERBYTE = bytes.fromhex("26")
-        P2SH_VERBYTES = [bytes.fromhex("0A")]
-        WIF_BYTE = bytes.fromhex("C6")
-        TX_COUNT_HEIGHT = 115890
-        TX_COUNT = 245030
-        TX_PER_BLOCK = 4
-        RPC_PORT = 12454
-        PEERS = [
-            'electrum1-gbx.polispay.org',
-            'electrum2-gbx.polispay.org'
-        ]
-        SESSIONCLS = DashElectrumX
-        DAEMON = daemon.DashDaemon
+    NAME = "GoByte"
+    SHORTNAME = "GBX"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("0488B21E")
+    XPRV_VERBYTES = bytes.fromhex("0488ADE4")
+    GENESIS_HASH = ('0000033b01055cf8df90b01a14734cae'
+                    '92f7039b9b0e48887b4e33a469d7bc07')
+    P2PKH_VERBYTE = bytes.fromhex("26")
+    P2SH_VERBYTES = [bytes.fromhex("0A")]
+    WIF_BYTE = bytes.fromhex("C6")
+    TX_COUNT_HEIGHT = 115890
+    TX_COUNT = 245030
+    TX_PER_BLOCK = 4
+    RPC_PORT = 12454
+    PEERS = [
+        'electrum1-gbx.polispay.org',
+        'electrum2-gbx.polispay.org'
+    ]
+    SESSIONCLS = DashElectrumX
+    DAEMON = daemon.DashDaemon
 
-        @classmethod
-        def header_hash(cls, header):
-            '''Given a header return the hash.'''
-            import neoscrypt
-            return neoscrypt.getPoWHash(header)
+    @classmethod
+    def header_hash(cls, header):
+        '''Given a header return the hash.'''
+        import neoscrypt
+        return neoscrypt.getPoWHash(header)
 
 
 class Monoeci(Coin):
-            NAME = "Monoeci"
-            SHORTNAME = "XMCC"
-            NET = "mainnet"
-            XPUB_VERBYTES = bytes.fromhex("0488B21E")
-            XPRV_VERBYTES = bytes.fromhex("0488ADE4")
-            GENESIS_HASH = ('0000005be1eb05b05fb45ae38ee9c144'
-                            '1514a65343cd146100a574de4278f1a3')
-            P2PKH_VERBYTE = bytes.fromhex("32")
-            P2SH_VERBYTES = [bytes.fromhex("49")]
-            WIF_BYTE = bytes.fromhex("4D")
-            TX_COUNT_HEIGHT = 140000
-            TX_COUNT = 140000
-            TX_PER_BLOCK = 4
-            RPC_PORT = 24156
-            PEERS = [
-                'electrum1-gbx.polispay.org',
-                'electrum2-gbx.polispay.org'
-            ]
-            SESSIONCLS = DashElectrumX
-            DAEMON = daemon.DashDaemon
-
-            @classmethod
-            def header_hash(cls, header):
-                '''Given a header return the hash.'''
-                import x11_hash
-                return x11_hash.getPoWHash(header)
-
-
-class MinexcoinMixin(object):
-    STATIC_BLOCK_HEADERS = True
-    BASIC_HEADER_SIZE = 209
-    DESERIALIZER = lib_tx.DeserializerEquihash
+    NAME = "Monoeci"
+    SHORTNAME = "XMCC"
+    NET = "mainnet"
+    XPUB_VERBYTES = bytes.fromhex("0488B21E")
+    XPRV_VERBYTES = bytes.fromhex("0488ADE4")
+    GENESIS_HASH = ('0000005be1eb05b05fb45ae38ee9c144'
+                    '1514a65343cd146100a574de4278f1a3')
+    P2PKH_VERBYTE = bytes.fromhex("32")
+    P2SH_VERBYTES = [bytes.fromhex("49")]
+    WIF_BYTE = bytes.fromhex("4D")
+    TX_COUNT_HEIGHT = 140000
+    TX_COUNT = 140000
+    TX_PER_BLOCK = 4
+    RPC_PORT = 24156
+    PEERS = [
+        'electrum1-gbx.polispay.org',
+        'electrum2-gbx.polispay.org'
+    ]
+    SESSIONCLS = DashElectrumX
+    DAEMON = daemon.DashDaemon
 
     @classmethod
-    def electrum_header(cls, header, height):
-        version, = struct.unpack('<I', header[:4])
-        timestamp, bits = struct.unpack('<II', header[100:108])
-
-        return {
-            'block_height': height,
-            'version': version,
-            'prev_block_hash': hash_to_hex_str(header[4:36]),
-            'merkle_root': hash_to_hex_str(header[36:68]),
-            'timestamp': timestamp,
-            'bits': bits,
-            'nonce': hash_to_hex_str(header[108:140]),
-            'solution': hash_to_hex_str(header[140:209]),
-        }
-
-    @classmethod
-    def block_header(cls, block, height):
-        '''Return the block header bytes'''
-        deserializer = cls.DESERIALIZER(block)
-        return deserializer.read_header(height, 140)
+    def header_hash(cls, header):
+        '''Given a header return the hash.'''
+        import x11_hash
+        return x11_hash.getPoWHash(header)
 
 
-class Minexcoin(MinexcoinMixin, Coin):
+class Minexcoin(EquihashMixin, Coin):
     NAME = "Minexcoin"
     SHORTNAME = "MNX"
     NET = "mainnet"
@@ -2034,16 +2090,31 @@ class Minexcoin(MinexcoinMixin, Coin):
     WIF_BYTE = bytes.fromhex("80")
     GENESIS_HASH = ('490a36d9451a55ed197e34aca7414b35'
                     'd775baa4a8e896f1c577f65ce2d214cb')
-    DESERIALIZER = lib_tx.DeserializerEquihash
+    STATIC_BLOCK_HEADERS = True
+    BASIC_HEADER_SIZE = 209
+    HEADER_SIZE_NO_SOLUTION = 140
     TX_COUNT = 327963
     TX_COUNT_HEIGHT = 74495
     TX_PER_BLOCK = 5
     RPC_PORT = 8022
     CHUNK_SIZE = 960
     PEERS = [
+        'electrumx.xpresit.net s t',
         'elex01-ams.turinex.eu s t',
         'eu.minexpool.nl s t'
     ]
+
+    @classmethod
+    def electrum_header(cls, header, height):
+        h = super().electrum_header(header, height)
+        h['solution'] = hash_to_hex_str(header[cls.HEADER_SIZE_NO_SOLUTION:])
+        return h
+
+    @classmethod
+    def block_header(cls, block, height):
+        '''Return the block header bytes'''
+        deserializer = cls.DESERIALIZER(block)
+        return deserializer.read_header(height, cls.HEADER_SIZE_NO_SOLUTION)
 
 
 class Groestlcoin(Coin):
@@ -2101,6 +2172,7 @@ class GroestlcoinTestnet(Groestlcoin):
     ]
 
 
+<<<<<<< HEAD
 class Qtum(Coin):
     NAME = "Qtum"
     SHORTNAME = "Qtum"

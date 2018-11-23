@@ -1,4 +1,4 @@
-# Copyright (c) 2017, Neil Booth
+# Copyright (c) 2017-2018, Neil Booth
 #
 # All rights reserved.
 #
@@ -14,7 +14,7 @@ import ssl
 import time
 from collections import defaultdict, Counter
 
-from aiorpcx import (ClientSession, SOCKSProxy,
+from aiorpcx import (Connector, RPCSession, SOCKSProxy,
                      Notification, handler_invocation,
                      SOCKSError, RPCError, TaskTimeout, TaskGroup, Event,
                      sleep, run_in_thread, ignore_after, timeout_after)
@@ -37,7 +37,7 @@ def assert_good(message, result, instance):
                            f'{type(result).__name__}')
 
 
-class PeerSession(ClientSession):
+class PeerSession(RPCSession):
     '''An outgoing session to a peer.'''
 
     async def handle_request(self, request):
@@ -55,12 +55,12 @@ class PeerManager(object):
     Attempts to maintain a connection with up to 8 peers.
     Issues a 'peers.subscribe' RPC to them and tells them our data.
     '''
-    def __init__(self, env, chain_state):
+    def __init__(self, env, db):
         self.logger = class_logger(__name__, self.__class__.__name__)
         # Initialise the Peer class
         Peer.DEFAULT_PORTS = env.coin.PEER_DEFAULT_PORTS
         self.env = env
-        self.chain_state = chain_state
+        self.db = db
 
         # Our clearnet and Tor Peers, if any
         sclass = env.coin.SESSIONCLS
@@ -197,6 +197,7 @@ class PeerManager(object):
                 pause = WAKEUP_SECS * 2 ** peer.try_count
             async with ignore_after(pause):
                 await peer.retry_event.wait()
+                peer.retry_event.clear()
 
     async def _should_drop_peer(self, peer):
         peer.try_count += 1
@@ -225,8 +226,8 @@ class PeerManager(object):
             peer_text = f'[{peer}:{port} {kind}]'
             try:
                 async with timeout_after(120 if peer.is_tor else 30):
-                    async with PeerSession(peer.host, port,
-                                           **kwargs) as session:
+                    async with Connector(PeerSession, peer.host, port,
+                                         **kwargs) as session:
                         await self._verify_peer(session, peer)
                 is_good = True
                 break
@@ -290,17 +291,27 @@ class PeerManager(object):
         peer.features['server_version'] = server_version
         ptuple = protocol_tuple(protocol_version)
 
-        # FIXME: Make concurrent preserving the exception
-        await self._send_headers_subscribe(session, peer, ptuple)
-        await self._send_server_features(session, peer)
-        await self._send_peers_subscribe(session, peer)
+        async with TaskGroup() as g:
+            await g.spawn(self._send_headers_subscribe(session, peer, ptuple))
+            await g.spawn(self._send_server_features(session, peer))
+            peers_task = await g.spawn(self._send_peers_subscribe
+                                       (session, peer))
+
+        # Process reported peers if remote peer is good
+        peers = peers_task.result()
+        await self._note_peers(peers)
+        features = self._features_to_register(peer, peers)
+        if features:
+            self.logger.info(f'registering ourself with {peer}')
+            # We only care to wait for the response
+            await session.send_request('server.add_peer', [features])
 
     async def _send_headers_subscribe(self, session, peer, ptuple):
         message = 'blockchain.headers.subscribe'
         result = await session.send_request(message)
         assert_good(message, result, dict)
 
-        our_height = self.chain_state.db_height()
+        our_height = self.db.db_height
         if ptuple < (1, 3):
             their_height = result.get('block_height')
         else:
@@ -313,7 +324,7 @@ class PeerManager(object):
 
         # Check prior header too in case of hard fork.
         check_height = min(our_height, their_height)
-        raw_header = self.chain_state.raw_header(check_height)
+        raw_header = await self.db.raw_header(check_height)
         if ptuple >= (1, 4):
             ours = raw_header.hex()
             message = 'blockchain.block.header'
@@ -356,18 +367,10 @@ class PeerManager(object):
         # Call add_peer if the remote doesn't appear to know about us.
         try:
             real_names = [' '.join([u[1]] + u[2]) for u in raw_peers]
-            peers = [Peer.from_real_name(real_name, str(peer))
-                     for real_name in real_names]
+            return [Peer.from_real_name(real_name, str(peer))
+                    for real_name in real_names]
         except Exception:
             raise BadPeerError('bad server.peers.subscribe response')
-
-        await self._note_peers(peers)
-        features = self._features_to_register(peer, peers)
-        if not features:
-            return
-        self.logger.info(f'registering ourself with {peer}')
-        # We only care to wait for the response
-        await session.send_request('server.add_peer', [features])
 
     #
     # External interface
