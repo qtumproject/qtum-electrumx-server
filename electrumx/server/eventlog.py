@@ -23,7 +23,7 @@ class Eventlog(object):
         self.logger = util.class_logger(__name__, self.__class__.__name__)
         # For history compaction
         self.max_hist_row_entries = 12500
-        self.unflushed = defaultdict(partial(array.array, 'I'))
+        self.unflushed = defaultdict(list) # {b'hashY' => [array('I', [txnum, log_index]),]}
         self.unflushed_count = 0
         self.db = None
 
@@ -105,8 +105,13 @@ class Eventlog(object):
         """
         eventlogs: {b'hashY' => [array('I', [txnum, log_index]),]}
         """
-        self.unflushed.update(eventlogs)
-        count = sum(len(x) for x in eventlogs.values())
+        unflushed = self.unflushed
+        count = 0
+        for hashY in eventlogs:
+            datas = eventlogs[hashY]
+            for data in datas:
+                unflushed[hashY].append(data)
+            count += len(datas)
         self.unflushed_count += count
 
     def unflushed_memsize(self):
@@ -194,8 +199,6 @@ class Eventlog(object):
             for key, value in write_items:
                 batch.put(key, value)
             self.write_state(batch)
-
-    # todo codeface
 
     def _compact_hashY(self, hashY, hist_map, hist_list,
                        write_items, keys_to_delete):

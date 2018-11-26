@@ -188,9 +188,8 @@ class BlockProcessor(object):
         self.utxo_cache = {}
         self.db_deletes = []
 
-        # eventlog and hashY
+        # eventlog
         self.eventlog_touched = set()
-        self.hashYs = defaultdict(set)  # {blockHash => [hashY, ]}, for reorg_chain
 
         # If the lock is successfully acquired, in-memory chain state
         # is consistent with self.height
@@ -269,14 +268,15 @@ class BlockProcessor(object):
             # self.touched can include other addresses which is
             # harmless, but remove None.
             self.touched.discard(None)
-            self.db.flush_backup(self.flush_data(), self.touched)
+            self.eventlog_touched.discard(None)
+            self.db.flush_backup(self.flush_data(), self.touched, self.eventlog_touched)
 
         start, last, hashes = await self.reorg_hashes(count)
         # Reverse and convert to hex strings.
         hashes = [hash_to_hex_str(hash) for hash in reversed(hashes)]
         # get saved evntlog hashYs
         if hashes:
-            eventlog_hashYs = reduce(operator.add, [self.get_block_hashYs(x) for x in hashes])
+            eventlog_hashYs = reduce(operator.add, [self.db.get_block_hashYs(x) for x in hashes])
         else:
             eventlog_hashYs = []
         self.logger.info('chain reorg eventlog_hashYs {} {}'.format(eventlog_hashYs, hashes))
@@ -356,8 +356,7 @@ class BlockProcessor(object):
     async def flush(self, flush_utxos):
         def flush():
             self.db.flush_dbs(self.flush_data(), flush_utxos,
-                              self.estimate_txs_remaining, self.hashYs)
-            self.hashYs = defaultdict(set)
+                              self.estimate_txs_remaining)
         await self.run_in_thread_with_lock(flush)
 
     async def _maybe_flush(self):
@@ -406,7 +405,7 @@ class BlockProcessor(object):
         height = self.height
 
         eventlog_dict, hashY_dict = self.raw_eventlogs_to_dict(raw_eventlogs)
-        self.hashYs = hashY_dict  # no need to cache all hashYs, only need most recent
+        self.db.hashYs = hashY_dict  # no need to cache all hashYs, only need most recent
 
         for block in blocks:
             height += 1
@@ -444,7 +443,8 @@ class BlockProcessor(object):
             tx_numb = s_pack('<I', tx_num)
 
             # eventlog
-            datas = eventlog_dict.get(hash_to_hex_str(tx_hash), [])
+            tx_hash_str = hash_to_hex_str(tx_hash)
+            datas = eventlog_dict.get(tx_hash_str, [])
             for data in datas:
                 hashY, log_index = data
                 eventlogs[hashY].append(array.array('I', [tx_num, log_index]))

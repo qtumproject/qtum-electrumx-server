@@ -78,6 +78,7 @@ class DB(object):
         self.db_class = db_class(self.env.db_engine)
         self.history = History()
         self.eventlog = Eventlog()
+        self.unflushed_hashYs = defaultdict(set)  # {blockHash => [hashY, ]}, for reorg_chain
         self.hashY_db = None
         self.utxo_db = None
         self.tx_counts = None
@@ -196,7 +197,7 @@ class DB(object):
         self.history.assert_flushed()
         self.eventlog.assert_flushed()
 
-    def flush_dbs(self, flush_data, flush_utxos, estimate_txs_remaining, hashYs):
+    def flush_dbs(self, flush_data, flush_utxos, estimate_txs_remaining):
         '''Flush out cached state.  History is always flushed; UTXOs are
         flushed if flush_utxos.'''
         if flush_data.height == self.db_height:
@@ -217,7 +218,7 @@ class DB(object):
         self.flush_eventlog()
 
         # HashYs
-        self.flush_hashYs(hashYs)
+        self.flush_hashYs()
 
         # Flush state last as it reads the wall time.
         with self.utxo_db.write_batch() as batch:
@@ -486,8 +487,7 @@ class DB(object):
 
         while True:
             history = await run_in_thread(read_eventlog)
-            # todo codeface
-            if all(hash is not None for hash, height in history):
+            if all(record is not None for record in history):
                 return history
             self.logger.warning(f'limited_eventlog: tx hash '
                                 f'not found (reorg?), retrying...')
@@ -713,11 +713,11 @@ class DB(object):
         return await run_in_thread(lookup_utxos, hashX_pairs)
 
     # HashY
-
-    def flush_hashYs(self, hashYs):
+    def flush_hashYs(self):
         with self.hashY_db.write_batch() as batch:
-            for blockHash, hashY_arr in hashYs.items():
+            for blockHash, hashY_arr in self.unflushed_hashYs.items():
                 batch.put(blockHash.encode(), b'\x00'.join(hashY_arr))
+        self.unflushed_hashYs = defaultdict(set)  # {blockHash => [hashY, ]}, for reorg_chain
 
     def get_block_hashYs(self, block_hash):
         hashYs = self.hashY_db.get(block_hash.encode())

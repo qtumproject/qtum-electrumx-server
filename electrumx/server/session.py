@@ -124,7 +124,7 @@ class SessionManager(object):
         self.cur_group = SessionGroup(0)
         self.txs_sent = 0
         self.start_time = time.time()
-        self._eventlog_cache = pylru.lrucache(256)  # { hashY => [txnum, log_index] }
+        self.eventlog_cache = pylru.lrucache(256)  # { hashY => [txnum, log_index] }
         self.history_cache = pylru.lrucache(256)
         self.notified_height = None
         # Cache some idea of room to avoid recounting on each subscription
@@ -567,12 +567,10 @@ class SessionManager(object):
             hc = self.history_cache
             for hashX in set(hc).intersection(touched):
                 del hc[hashX]
-
-        # clear eventlog cache
-        ec = self._eventlog_cache
-        if eventlog_touched is not None:
-            for hashY in set(ec).intersection(eventlog_touched):
-                del ec[hashY]
+            ec = self.eventlog_cache
+            if eventlog_touched is not None:
+                for hashY in set(ec).intersection(eventlog_touched):
+                    del ec[hashY]
 
         for session in self.sessions:
             await session.spawn(session.notify, touched, eventlog_touched, height_changed)
@@ -598,11 +596,16 @@ class SessionManager(object):
                                f'{self.max_subs:,d} reached')
         self.subs_room -= 1
 
-    async def get_eventlogs(self, hashY):
+    async def limited_eventlog(self, hashY):
         '''A caching layer.'''
-        ec = self._eventlog_cache
+        ec = self.eventlog_cache
         if hashY not in ec:
-            ec[hashY] = await self.chain_state.get_eventlogs(hashY)
+            # History DoS limit.  Each element of history is about 99
+            # bytes when encoded as JSON.  This limits resource usage
+            # on bloated history requests, and uses a smaller divisor
+            # so large requests are logged before refusing them.
+            limit = self.env.max_send // 97
+            ec[hashY] = await self.db.limited_eventlog(hashY, limit=limit)
         return ec[hashY]
 
 
@@ -765,7 +768,6 @@ class ElectrumX(SessionBase):
         return len(self.hashX_subs)
 
     async def notify(self, touched, eventlog_touched, height_changed):
-        # todo codeface
         '''Notify the client about changes to touched addresses (from mempool
         updates or new blocks) and height.
         '''
