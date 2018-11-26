@@ -129,10 +129,6 @@ class SessionManager(object):
         self.notified_height = None
         # Cache some idea of room to avoid recounting on each subscription
         self.subs_room = 0
-        # Masternode stuff only for such coins
-        if issubclass(env.coin.SESSIONCLS, DashElectrumX):
-            self.mn_cache_height = 0
-            self.mn_cache = []
         # Event triggered when electrumx is listening for incoming requests.
         self.server_listening = Event()
         self.session_event = Event()
