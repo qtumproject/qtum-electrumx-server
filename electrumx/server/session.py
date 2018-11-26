@@ -30,7 +30,6 @@ import electrumx.lib.text as text
 import electrumx.lib.util as util
 from electrumx.lib.hash import (sha256, hash_to_hex_str, hex_str_to_hash,
                                 HASHX_LEN, Base58Error)
-from electrumx.lib.peer import Peer
 from electrumx.server.daemon import DaemonError
 from electrumx.server.peers import PeerManager
 
@@ -772,6 +771,7 @@ class ElectrumX(SessionBase):
             await self.send_notification('blockchain.headers.subscribe', args)
 
         touched = touched.intersection(self.hashX_subs)
+
         if touched or (height_changed and self.mempool_statuses):
             changed = {}
 
@@ -802,6 +802,19 @@ class ElectrumX(SessionBase):
             if changed:
                 es = '' if len(changed) == 1 else 'es'
                 self.logger.info(f'notified of {len(changed):,d} address{es}')
+
+        if eventlog_touched:
+            matched = eventlog_touched.intersection(self.contract_subs)
+            if matched:
+                for hashY in matched:
+                    hash160, contract_addr, topic = self.contract_subs[hashY]
+                    contract_status = await self.hash160_contract_status(hash160, contract_addr, topic)
+                    # 1.3
+                    method = 'blockchain.hash160.contract.subscribe'
+                    await self.send_notification(method, (hash160, contract_addr, contract_status))
+                    # 1.4
+                    method = 'blockchain.contract.event.subscribe'
+                    await self.send_notification(method, (hash160, contract_addr, topic, contract_status))
 
     async def subscribe_headers_result(self):
         '''The result of a header subscription or notification.'''
@@ -1365,179 +1378,3 @@ class LocalRPC(SessionBase):
 
     def protocol_version_string(self):
         return 'RPC'
-
-
-class DashElectrumX(ElectrumX):
-    '''A TCP server that handles incoming Electrum Dash connections.'''
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.mns = set()
-
-    def set_request_handlers(self, ptuple):
-        super().set_request_handlers(ptuple)
-        self.request_handlers.update({
-            'masternode.announce.broadcast':
-            self.masternode_announce_broadcast,
-            'masternode.subscribe': self.masternode_subscribe,
-            'masternode.list': self.masternode_list
-        })
-
-    async def notify(self, touched, height_changed):
-        '''Notify the client about changes in masternode list.'''
-        await super().notify(touched, height_changed)
-        for mn in self.mns:
-            status = await self.daemon_request('masternode_list',
-                                               ['status', mn])
-            await self.send_notification('masternode.subscribe',
-                                         [mn, status.get(mn)])
-
-    # Masternode command handlers
-    async def masternode_announce_broadcast(self, signmnb):
-        '''Pass through the masternode announce message to be broadcast
-        by the daemon.
-
-        signmnb: signed masternode broadcast message.'''
-        try:
-            return await self.daemon_request('masternode_broadcast',
-                                             ['relay', signmnb])
-        except DaemonError as e:
-            error, = e.args
-            message = error['message']
-            self.logger.info(f'masternode_broadcast: {message}')
-            raise RPCError(BAD_REQUEST, 'the masternode broadcast was '
-                           f'rejected.\n\n{message}\n[{signmnb}]')
-
-    async def masternode_subscribe(self, collateral):
-        '''Returns the status of masternode.
-
-        collateral: masternode collateral.
-        '''
-        result = await self.daemon_request('masternode_list',
-                                           ['status', collateral])
-        if result is not None:
-            self.mns.add(collateral)
-            return result.get(collateral)
-        return None
-
-    async def masternode_list(self, payees):
-        '''
-        Returns the list of masternodes.
-
-        payees: a list of masternode payee addresses.
-        '''
-        if not isinstance(payees, list):
-            raise RPCError(BAD_REQUEST, 'expected a list of payees')
-
-        def get_masternode_payment_queue(mns):
-            '''Returns the calculated position in the payment queue for all the
-            valid masterernodes in the given mns list.
-
-            mns: a list of masternodes information.
-            '''
-            now = int(datetime.datetime.utcnow().strftime("%s"))
-            mn_queue = []
-
-            # Only ENABLED masternodes are considered for the list.
-            for line in mns:
-                mnstat = mns[line].split()
-                if mnstat[0] == 'ENABLED':
-                    # if last paid time == 0
-                    if int(mnstat[5]) == 0:
-                        # use active seconds
-                        mnstat.append(int(mnstat[4]))
-                    else:
-                        # now minus last paid
-                        delta = now - int(mnstat[5])
-                        # if > active seconds, use active seconds
-                        if delta >= int(mnstat[4]):
-                            mnstat.append(int(mnstat[4]))
-                        # use active seconds
-                        else:
-                            mnstat.append(delta)
-                    mn_queue.append(mnstat)
-            mn_queue = sorted(mn_queue, key=lambda x: x[8], reverse=True)
-            return mn_queue
-
-        def get_payment_position(payment_queue, address):
-            '''
-            Returns the position of the payment list for the given address.
-
-            payment_queue: position in the payment queue for the masternode.
-            address: masternode payee address.
-            '''
-            position = -1
-            for pos, mn in enumerate(payment_queue, start=1):
-                if mn[2] == address:
-                    position = pos
-                    break
-            return position
-
-        # Accordingly with the masternode payment queue, a custom list
-        # with the masternode information including the payment
-        # position is returned.
-        cache = self.session_mgr.mn_cache
-        if not cache or self.session_mgr.mn_cache_height != self.db.db_height:
-            full_mn_list = await self.daemon_request('masternode_list',
-                                                     ['full'])
-            mn_payment_queue = get_masternode_payment_queue(full_mn_list)
-            mn_payment_count = len(mn_payment_queue)
-            mn_list = []
-            for key, value in full_mn_list.items():
-                mn_data = value.split()
-                mn_info = {}
-                mn_info['vin'] = key
-                mn_info['status'] = mn_data[0]
-                mn_info['protocol'] = mn_data[1]
-                mn_info['payee'] = mn_data[2]
-                mn_info['lastseen'] = mn_data[3]
-                mn_info['activeseconds'] = mn_data[4]
-                mn_info['lastpaidtime'] = mn_data[5]
-                mn_info['lastpaidblock'] = mn_data[6]
-                mn_info['ip'] = mn_data[7]
-                mn_info['paymentposition'] = get_payment_position(
-                    mn_payment_queue, mn_info['payee'])
-                mn_info['inselection'] = (
-                    mn_info['paymentposition'] < mn_payment_count // 10)
-                balance = await self.address_get_balance(mn_info['payee'])
-                mn_info['balance'] = (sum(balance.values())
-                                      / self.coin.VALUE_PER_COIN)
-                mn_list.append(mn_info)
-            cache.clear()
-            cache.extend(mn_list)
-            self.session_mgr.mn_cache_height = self.db.db_height
-
-        # If payees is an empty list the whole masternode list is returned
-        if payees:
-            return [mn for mn in cache if mn['payee'] in payees]
-        else:
-            return cache
-
-
-class SmartCashElectrumX(DashElectrumX):
-    '''A TCP server that handles incoming Electrum-SMART connections.'''
-
-    def set_request_handlers(self, ptuple):
-        super().set_request_handlers(ptuple)
-        self.request_handlers.update({
-            'smartrewards.current': self.smartrewards_current,
-            'smartrewards.check': self.smartrewards_check
-        })
-
-    async def smartrewards_current(self):
-        '''Returns the current smartrewards info.'''
-        result = await self.daemon_request('smartrewards', ['current'])
-        if result is not None:
-            return result
-        return None
-
-    async def smartrewards_check(self, addr):
-        '''
-        Returns the status of an address
-
-        addr: a single smartcash address
-        '''
-        result = await self.daemon_request('smartrewards', ['check', addr])
-        if result is not None:
-            return result
-        return None
