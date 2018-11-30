@@ -135,6 +135,12 @@ class Coin(object):
         '''
         if script and script[0] == OP_RETURN:
             return None
+        # Qtum: make p2pk and p2pkh the same hashX
+        if (len(script) == 35 and script[0] == 0x21 and script[1] in [2, 3]) \
+                or (len(script) == 67 and script[0] == 0x41 and script[1] in [4, 6, 7]) \
+                and script[-1] == OpCodes.OP_CHECKSIG:
+            pubkey = script[1:-1]
+            script = ScriptPubKey.P2PKH_script(hash160(pubkey))
         return sha256(script).digest()[:HASHX_LEN]
 
     @staticmethod
