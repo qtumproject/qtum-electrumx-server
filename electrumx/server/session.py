@@ -1238,11 +1238,10 @@ class ElectrumX(SessionBase):
     def is_tor(self):
         '''Try to detect if the connection is to a tor hidden service we are
         running.'''
-        peername = self.peer_mgr.proxy_peername()
-        if not peername:
+        proxy_address = self.peer_mgr.proxy_address()
+        if not proxy_address:
             return False
-        peer_address = self.peer_address()
-        return peer_address and peer_address[0] == peername[0]
+        return self.remote_address().host == proxy_address.host
 
     async def replaced_banner(self, banner):
         network_info = await self.daemon_request('getnetworkinfo')
