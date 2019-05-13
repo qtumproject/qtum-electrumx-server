@@ -78,7 +78,7 @@ class DB(object):
         self.db_class = db_class(self.env.db_engine)
         self.history = History()
         self.eventlog = Eventlog()
-        self.unflushed_hashYs = defaultdict(set)  # {blockHash => [hashY, ]}, for reorg_chain
+        self.unflushed_hashYs = defaultdict(set)  # {blockHash => [hashY_topic, ]}, for reorg_chain
         self.hashY_db = None
         self.utxo_db = None
         self.utxo_flush_count = 0
@@ -502,7 +502,7 @@ class DB(object):
                                 f'not found (reorg?), retrying...')
             await sleep(0.25)
 
-    async def limited_eventlog(self, hashY, *, limit=1000):
+    async def limited_eventlog(self, hashY_topic, *, limit=1000):
         '''Return an unpruned, sorted list of (tx_hash, height) tuples of
         confirmed transactions that touched the address, earliest in
         the blockchain first.  Includes both spending and receiving
@@ -510,7 +510,7 @@ class DB(object):
         limit to None to get them all.
         '''
         def read_eventlog():
-            datas = list(self.eventlog.get_txnums(hashY, limit))
+            datas = list(self.eventlog.get_txnums(hashY_topic, limit))
             fs_tx_hash = self.fs_tx_hash
             return [fs_tx_hash(tx_num) + (log_index, ) for (tx_num, log_index) in datas]
 

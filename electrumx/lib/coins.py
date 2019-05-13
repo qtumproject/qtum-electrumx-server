@@ -39,10 +39,9 @@ from functools import partial
 
 import electrumx.lib.util as util
 from electrumx.lib.hash import Base58, hash160, double_sha256, hash_to_hex_str
-from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash
+from electrumx.lib.hash import HASHX_LEN, HASHY_LEN
 from electrumx.lib.script import ScriptPubKey, OpCodes
 import electrumx.lib.tx as lib_tx
-import electrumx.lib.tx_dash as lib_tx_dash
 import electrumx.server.block_processor as block_proc
 import electrumx.server.daemon as daemon
 from electrumx.server.session import ElectrumX
@@ -270,7 +269,7 @@ class Coin(object):
         m = sha256()
         m.update(hash160.encode())
         m.update(contract_addr.encode())
-        return m.digest()
+        return m.digest()[:HASHY_LEN]
 
 
 class Qtum(Coin):

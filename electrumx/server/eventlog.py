@@ -12,19 +12,23 @@ from struct import pack, unpack
 
 import electrumx.lib.util as util
 from electrumx.lib.util import pack_be_uint16, unpack_be_uint16_from
-from electrumx.lib.hash import hash_to_hex_str, HASHX_LEN
+from electrumx.lib.hash import hash_to_hex_str, HASHY_LEN, TOPIC_LEN
 
 
 class Eventlog(object):
 
-    DB_VERSIONS = [0]
+    DB_VERSIONS = [1]
 
     def __init__(self):
         self.logger = util.class_logger(__name__, self.__class__.__name__)
         # For history compaction
         self.max_hist_row_entries = 12500
-        self.unflushed = defaultdict(list) # {b'hashY' => [array('I', [txnum, log_index]),]}
+        self.unflushed = defaultdict(list)  # {b'hashY_topic' => [array('I', [txnum, log_index]),]}
         self.unflushed_count = 0
+        self.flush_count = 0
+        self.comp_flush_count = -1
+        self.comp_cursor = -1
+        self.db_version = max(self.DB_VERSIONS)
         self.db = None
 
     def open_db(self, db_class, for_sync, utxo_flush_count, compacting):
@@ -103,14 +107,14 @@ class Eventlog(object):
 
     def add_unflushed(self, eventlogs):
         """
-        eventlogs: {b'hashY' => [array('I', [txnum, log_index]),]}
+        eventlogs: {b'hashY_topic' => [array('I', [txnum, log_index]),]}
         """
         unflushed = self.unflushed
         count = 0
-        for hashY in eventlogs:
-            datas = eventlogs[hashY]
+        for hashY_topic in eventlogs:
+            datas = eventlogs[hashY_topic]
             for data in datas:
-                unflushed[hashY].append(data)
+                unflushed[hashY_topic].append(data)
             count += len(datas)
         self.unflushed_count += count
 
@@ -123,10 +127,10 @@ class Eventlog(object):
         flush_id = pack_be_uint16(self.flush_count)
         unflushed = self.unflushed
         with self.db.write_batch() as batch:
-            for hashY in sorted(unflushed):
-                key = hashY + flush_id
+            for hashY_topic in sorted(unflushed):
+                key = hashY_topic + flush_id
                 # 把二维数据按照一维数组存储
-                batch.put(key, b''.join([x.tobytes() for x in unflushed[hashY]]))
+                batch.put(key, b''.join([x.tobytes() for x in unflushed[hashY_topic]]))
             self.write_state(batch)
 
         count = len(unflushed)
@@ -200,9 +204,9 @@ class Eventlog(object):
                 batch.put(key, value)
             self.write_state(batch)
 
-    def _compact_hashY(self, hashY, hist_map, hist_list,
-                       write_items, keys_to_delete):
-        '''Compres history for a hashX.  hist_list is an ordered list of
+    def _compact_hashY_topic(self, hashY_topic, hist_map, hist_list,
+                             write_items, keys_to_delete):
+        '''Compres history for a hashY.  hist_list is an ordered list of
         the histories to be compressed.'''
         # History entries (tx numbers) are 4 bytes each.  Distribute
         # over rows of up to 50KB in size.  A fixed row size means
@@ -212,9 +216,9 @@ class Eventlog(object):
         full_hist = b''.join(hist_list)
         nrows = (len(full_hist) + max_row_size - 1) // max_row_size
         if nrows > 4:
-            self.logger.info('hashX {} is large: {:,d} entries across '
+            self.logger.info('hashY {} is large: {:,d} entries across '
                              '{:,d} rows'
-                             .format(hash_to_hex_str(hashY),
+                             .format(hash_to_hex_str(hashY_topic),
                                      len(full_hist) // 4, nrows))
 
         # Find what history needs to be written, and what keys need to
@@ -224,7 +228,7 @@ class Eventlog(object):
         write_size = 0
         keys_to_delete.update(hist_map)
         for n, chunk in enumerate(util.chunks(full_hist, max_row_size)):
-            key = hashY + pack_be_uint16(n)
+            key = hashY_topic + pack_be_uint16(n)
             if hist_map.get(key) == chunk:
                 keys_to_delete.remove(key)
             else:
@@ -237,32 +241,33 @@ class Eventlog(object):
         return write_size
 
     def _compact_prefix(self, prefix, write_items, keys_to_delete):
-        '''Compact all history entries for hashXs beginning with the
+        '''Compact all history entries for hashYs beginning with the
         given prefix.  Update keys_to_delete and write.'''
-        prior_hashY = None
+        prior_hashY_topic = None
         hist_map = {}
         hist_list = []
 
-        key_len = HASHX_LEN + 2
+        key_len = HASHY_LEN + TOPIC_LEN + 2
         write_size = 0
         for key, hist in self.db.iterator(prefix=prefix):
             # Ignore non-history entries
             if len(key) != key_len:
                 continue
-            hashY = key[:-2]
-            if hashY != prior_hashY and prior_hashY:
-                write_size += self._compact_hashY(prior_hashY, hist_map,
-                                                  hist_list, write_items,
-                                                  keys_to_delete)
+            hashY_topic = key[:-2]
+            if hashY_topic != prior_hashY_topic and prior_hashY_topic:
+                # print('prior_hashY is', prior_hashY)
+                write_size += self._compact_hashY_topic(prior_hashY_topic, hist_map,
+                                                        hist_list, write_items,
+                                                        keys_to_delete)
                 hist_map.clear()
                 hist_list.clear()
-            prior_hashX = hashY
+            prior_hashY_topic = hashY_topic
             hist_map[key] = hist
             hist_list.append(hist)
 
-        if prior_hashY:
-            write_size += self._compact_hashY(prior_hashY, hist_map, hist_list,
-                                              write_items, keys_to_delete)
+        if prior_hashY_topic:
+            write_size += self._compact_hashY_topic(prior_hashY_topic, hist_map, hist_list,
+                                                    write_items, keys_to_delete)
         return write_size
 
     def _compact_history(self, limit):
@@ -284,7 +289,7 @@ class Eventlog(object):
         max_rows = self.comp_flush_count + 1
         self._flush_compaction(cursor, write_items, keys_to_delete)
 
-        self.logger.info('history compaction: wrote {:,d} rows ({:.1f} MB), '
+        self.logger.info('eventlog compaction: wrote {:,d} rows ({:.1f} MB), '
                          'removed {:,d} rows, largest: {:,d}, {:.1f}% complete'
                          .format(len(write_items), write_size / 1000000,
                                  len(keys_to_delete), max_rows,
@@ -293,6 +298,6 @@ class Eventlog(object):
 
     def _cancel_compaction(self):
         if self.comp_cursor != -1:
-            self.logger.warning('cancelling in-progress history compaction')
+            self.logger.warning('cancelling in-progress eventlog compaction')
             self.comp_flush_count = -1
             self.comp_cursor = -1

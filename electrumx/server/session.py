@@ -32,7 +32,7 @@ from electrumx.lib.merkle import MerkleCache
 from electrumx.lib.text import sessions_lines
 import electrumx.lib.util as util
 from electrumx.lib.hash import (sha256, hash_to_hex_str, hex_str_to_hash,
-                                HASHX_LEN, Base58Error)
+                                HASHX_LEN, Base58Error, TOPIC_LEN)
 from electrumx.server.daemon import DaemonError
 from electrumx.server.peers import PeerManager
 
@@ -798,20 +798,20 @@ class SessionManager:
             group.retained_cost += session.cost
             group.sessions.remove(session)
 
-    async def limited_eventlog(self, hashY):
+    async def limited_eventlog(self, hashY_topic):
         '''A caching layer.'''
         limit = self.env.max_send // 97
         cost = 0.1
         self._eventlog_lookups += 1
         try:
-            result = self._eventlog_cache[hashY]
+            result = self._eventlog_cache[hashY_topic]
             self._evenlog_hits += 1
         except KeyError:
-            result = await self.db.limited_eventlog(hashY, limit=limit)
+            result = await self.db.limited_eventlog(hashY_topic, limit=limit)
             cost += 0.1 + len(result) * 0.001
             if len(result) >= limit:
                 result = RPCError(BAD_REQUEST, f'eventlog too large', cost=cost)
-            self._eventlog_cache[hashY] = result
+            self._eventlog_cache[hashY_topic] = result
 
         if isinstance(result, Exception):
             raise result
@@ -1495,8 +1495,8 @@ class ElectrumX(SessionBase):
 
     async def contract_event_get_history(self, hash160, contract_addr, topic):
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
-        hashY = hashY + topic.encode()
-        eventlogs, _ = await self.session_mgr.limited_eventlog(hashY)
+        hashY_topic = hashY + topic.encode()[:TOPIC_LEN]
+        eventlogs, _ = await self.session_mgr.limited_eventlog(hashY_topic)
         conf = [{'tx_hash': hash_to_hex_str(tx_hash),
                  'height': height,
                  'log_index': log_index}
@@ -1519,8 +1519,8 @@ class ElectrumX(SessionBase):
 
     async def contract_event_subscribe(self, hash160, contract_addr, topic):
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
-        hashY = hashY + topic.encode()
-        self.contract_subs[hashY] = (hash160, contract_addr, topic)
+        hashY_topic = hashY + topic.encode()[:TOPIC_LEN]
+        self.contract_subs[hashY_topic] = (hash160, contract_addr, topic)
         return await self.hash160_contract_status(hash160, contract_addr, topic)
 
     def set_request_handlers(self, ptuple):
