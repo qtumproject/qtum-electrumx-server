@@ -88,8 +88,8 @@ class Controller(ServerBase):
         '''Start the RPC server and wait for the mempool to synchronize.  Then
         start serving external clients.
         '''
-        if not (0, 10, 1) <= aiorpcx_version < (0, 11):
-            raise RuntimeError('aiorpcX version 0.10.x, x >= 1, required')
+        if not (0, 18, 0) <= aiorpcx_version < (0, 19):
+            raise RuntimeError('aiorpcX version 0.18.x is required')
 
         env = self.env
         min_str, max_str = env.coin.SESSIONCLS.protocol_min_max_strings()
@@ -108,7 +108,10 @@ class Controller(ServerBase):
         bp = BlockProcessor(env, db, daemon, notifications)
 
         # Set notifications up to implement the MemPoolAPI
+        def get_db_height():
+            return db.db_height
         notifications.height = daemon.height
+        notifications.db_height = get_db_height
         notifications.cached_height = daemon.cached_height
         notifications.mempool_hashes = daemon.mempool_hashes
         notifications.raw_transactions = daemon.getrawtransactions

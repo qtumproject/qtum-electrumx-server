@@ -59,6 +59,11 @@ class Prefetcher(object):
                     await asyncio.sleep(self.polling_delay)
             except DaemonError as e:
                 self.logger.info(f'ignoring daemon error: {e}')
+            except asyncio.CancelledError as e:
+                self.logger.info(f'cancelled; prefetcher stopping {e}')
+                raise
+            except Exception:
+                self.logger.exception(f'ignoring unexpected exception')
 
     def get_prefetched_blocks(self):
         '''Called by block processor when it is processing queued blocks.'''
@@ -178,6 +183,10 @@ class BlockProcessor(object):
         self.next_cache_check = 0
         self.touched = set()
         self.reorg_count = 0
+        self.height = -1
+        self.tip = None
+        self.tx_count = 0
+        self._caught_up_event = None
 
         # Caches of unflushed items.
         self.headers = []
@@ -225,9 +234,9 @@ class BlockProcessor(object):
             await self._maybe_flush()
             if not self.db.first_sync:
                 s = '' if len(blocks) == 1 else 's'
-                self.logger.info('processed {:,d} block{} in {:.1f}s'
-                                 .format(len(blocks), s,
-                                         time.time() - start))
+                blocks_size = sum(len(block) for block in raw_blocks) / 1_000_000
+                self.logger.info(f'processed {len(blocks):,d} block{s} size {blocks_size:.2f} MB '
+                                 f'in {time.time() - start:.1f}s')
             if self._caught_up_event.is_set():
                 await self.notifications.on_block(self.touched, self.eventlog_touched, self.height)
             self.touched = set()
@@ -271,7 +280,7 @@ class BlockProcessor(object):
             self.eventlog_touched.discard(None)
             self.db.flush_backup(self.flush_data(), self.touched, self.eventlog_touched)
 
-        start, last, hashes = await self.reorg_hashes(count)
+        _start, last, hashes = await self.reorg_hashes(count)
         # Reverse and convert to hex strings.
         hashes = [hash_to_hex_str(hash) for hash in reversed(hashes)]
         # get saved evntlog hashYs

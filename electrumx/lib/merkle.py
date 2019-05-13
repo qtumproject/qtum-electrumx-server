@@ -88,7 +88,7 @@ class Merkle(object):
 
     def root(self, hashes, length=None):
         '''Return the merkle root of a non-empty iterable of binary hashes.'''
-        branch, root = self.branch_and_root(hashes, 0, length)
+        _branch, root = self.branch_and_root(hashes, 0, length)
         return root
 
     def root_from_proof(self, hash, branch, index):
@@ -129,7 +129,7 @@ class Merkle(object):
         level cached.
 
         To maximally reduce the amount of data hashed in computing a
-        markle branch, cache a tree of depth N at level N // 2.
+        merkle branch, cache a tree of depth N at level N // 2.
 
         level is a list of hashes in the middle of the tree (returned
         by level())
@@ -169,6 +169,7 @@ class MerkleCache(object):
         self.merkle = merkle
         self.source_func = source_func
         self.length = 0
+        self.level = []
         self.depth_higher = 0
         self.initialized = Event()
 

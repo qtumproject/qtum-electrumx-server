@@ -13,6 +13,7 @@ Return the block header at the given height.
   .. versionadded:: 1.3
   .. versionchanged:: 1.4
      *cp_height* parameter added
+  .. versionchanged:: 1.4.1
 
   *height*
 
@@ -40,7 +41,8 @@ Return the block header at the given height.
 
   * *header*
 
-    The raw block header as a hexadecimal string.
+    The raw block header as a hexadecimal string.  Starting with version 1.4.1,
+    AuxPoW data (if present in the original header) is truncated.
 
   * *root*
 
@@ -82,6 +84,7 @@ Return a concatenated chunk of block headers from the main chain.
   .. versionadded:: 1.2
   .. versionchanged:: 1.4
      *cp_height* parameter added
+  .. versionchanged:: 1.4.1
 
   *start_height*
 
@@ -112,7 +115,8 @@ Return a concatenated chunk of block headers from the main chain.
   * *hex*
 
     The binary block headers concatenated together in-order as a
-    hexadecimal string.
+    hexadecimal string.  Starting with version 1.4.1, AuxPoW data (if present
+    in the original header) is truncated if *cp_height* is nonzero.
 
   * *max*
 
@@ -174,6 +178,7 @@ be confirmed within a certain number of blocks.
 
   0.00101079
 
+
 blockchain.headers.subscribe
 ============================
 
@@ -182,24 +187,10 @@ Subscribe to receive block headers when a new block is found.
 **Signature**
 
   .. function:: blockchain.headers.subscribe()
-  .. versionchanged:: 1.2
-     Optional *raw* parameter added, defaulting to :const:`false`.
-  .. versionchanged:: 1.3
-     *raw* parameter deafults to :const:`true`.
-  .. versionchanged:: 1.4
-     *raw* parameter removed; responses and notifications pass raw
-     headers.
-
-  * *raw*
-
-    This single boolean argument exists in protocol versions 1.2
-    (defaulting to :const:`false`) and 1.3 (defaulting to
-    :const:`true`) only.
 
 **Result**
 
-  The header of the current block chain tip.  If *raw* is
-  :const:`true` the result is a dictionary with two members:
+  The header of the current block chain tip.  The result is a dictionary with two members:
 
   * *hex*
 
@@ -209,24 +200,9 @@ Subscribe to receive block headers when a new block is found.
 
     The height of the header, an integer.
 
-  If *raw* is :const:`false` the result is the coin-specific
-  :ref:`deserialized header <deserialized header>`.
-
 **Example Result**
 
-  With *raw* :const:`false`::
-
-   {
-     "bits": 402858285,
-     "block_height": 520481,
-     "merkle_root": "8e8e932eb858fd53cf09943d7efc9a8f674dc1363010ee64907a292d2fb0c25d",
-     "nonce": 3288656012,
-     "prev_block_hash": "000000000000000000b512b5d9fc7c5746587268547c04aa92383aaea0080289",
-     "timestamp": 1520495819,
-     "version": 536870912
-   }
-
-  With *raw* :const:`true`::
+::
 
    {
      "height": 520481,
@@ -412,66 +388,6 @@ hashes>`.
     }
   ]
 
-blockchain.scripthash.history
-=============================
-
-Return part of the confirmed history of a :ref:`script hash <script
-hashes>`.
-
-**Signature**
-
-  .. function:: blockchain.scripthash.history(scripthash, start_height)
-  .. versionadded:: 1.5
-
-  *scripthash*
-
-    The script hash as a hexadecimal string.
-
-  *start_height*
-
-    History will be returned starting from this height, a non-negative
-    integer.  If there are several matching transactions in a block,
-    the server will return *all* of them -- partial results from a
-    block are not permitted.  The client can start subsequent requests
-    at one above the greatest returned height and avoid repeats.
-
-**Result**
-
-  A dictionary with the following keys.
-
-  * *more*
-
-    :const:`true` indicates that there *may* be more history
-    available.  A follow-up request is required to obtain any.
-    :const:`false` means all history to blockchain's tip has been
-    returned.
-
-  * *history*
-
-    A list ot transactions.  Each transaction is itself a list of
-    two elements:
-
-      1. The block height
-      2. The transaction hash
-
-**Result Examples**
-
-::
-
-  {
-    "more": false,
-    "history": [
-      [
-        200004,
-        "acc3758bd2a26f869fcc67d48ff30b96464d476bca82c1cd6656e7d506816412"
-      ],
-      [
-        215008,
-        "f3e1bf48975b8d6060a9de8884296abb80be618dc00ae3cb2f6cee3085e09403"
-      ]
-    ]
-  }
-
 
 blockchain.scripthash.listunspent
 =================================
@@ -550,89 +466,35 @@ Subscribe to a script hash.
 
 **Result**
 
-  .. versionchanged:: 1.5
-
-  As of protocol 1.5, the transaction hash of the last confirmed
-  transaction in blockchain order, or :const:`null` if there are none.
-
-  For protocol versions 1.4 and below, the :ref:`status <status>` of
-  the script hash.
+  The :ref:`status <status>` of the script hash.
 
 **Notifications**
 
-  .. versionchanged:: 1.5
-
-  As this is a subscription, the client receives notifications when
-  the confirmed transaction history and/or associated mempool
-  transactions change.
-
-  As of protocol 1.5, the initial mempool and subsequent changes to it
-  are sent with :func:`mempool.changes` notifications.  When confirmed
-  history changes, a notification with signature
-
-    .. function:: blockchain.scripthash.subscribe(scripthash, tx_hash)
-
-  is sent, where *tx_hash* is the hash of the last confirmed
-  transaction in blockchain order.
-
-  For protocol versions 1.4 and below, the client will receive a
-  notification when the :ref:`status <status>` of the script hash
-  changes.  Its signature is
+  The client will receive a notification when the :ref:`status <status>` of the script
+  hash changes.  Its signature is
 
     .. function:: blockchain.scripthash.subscribe(scripthash, status)
 
-blockchain.scripthash.utxos
-===========================
+blockchain.scripthash.unsubscribe
+=================================
 
-Return some confirmed UTXOs sent to a script hash.
+Unsubscribe from a script hash, preventing future notifications if its :ref:`status
+<status>` changes.
 
 **Signature**
 
-  .. function:: blockchain.scripthash.utxos(scripthash, start_height)
-  .. versionadded:: 1.5
+  .. function:: blockchain.scripthash.unsubscribe(scripthash)
+  .. versionadded:: 1.4.2
 
   *scripthash*
 
     The script hash as a hexadecimal string.
 
-  *start_height*
-
-    UTXOs will be returned starting from this height, a non-negative
-    integer.  If there are several UTXOs in one block, the server will
-    return *all* of them -- partial results from a block are not
-    permitted.  The client can start subsequent requests at one above
-    the greatest returned height and avoid repeats.
-
-.. note:: To get the effects of transactions in the mempool adding or
-   removing UTXOs, a client must
-   :func:`blockchain.scripthash.subscribe` and track mempool
-   transactions sent via :func:`mempool.changes` notifications.
-
 **Result**
 
-  A dictionary with the following keys.
-
-  * *more*
-
-    :const:`true` indicates that there *may* be more UTXOs available.
-    A follow-up request is required to obtain any.  :const:`false`
-    means all UTXOs to the blockchain's tip have been returned.
-
-  * *utxos*
-
-    A list of UTXOs.  Each UTXO is itself a list with the following
-    elements:
-
-    1. The height of the block the transaction is in
-    2. The transaction hash as a hexadecimal string
-    3. The zero-based index of the output in the transaction's outputs
-    4. The output value, an integer in minimum coin units (satoshis)
-
-**Result Example**
-
-::
-  **TODO**
-
+  Returns :const:`True` if the scripthash was subscribed to, otherwise :const:`False`.
+  Note that :const:`False` might be returned even for something subscribed to earlier,
+  becuase the server can drop subscriptions in rare circumstances.
 
 blockchain.transaction.broadcast
 ================================
@@ -684,8 +546,6 @@ Return a raw transaction.
      ignored argument *height* removed
   .. versionchanged:: 1.2
      *verbose* argument added
-  .. versionchanged:: 1.5
-     *merkle* argument added
 
   *tx_hash*
 
@@ -695,38 +555,21 @@ Return a raw transaction.
 
     Whether a verbose coin-specific response is required.
 
-  *markle*
-
-    Whether a merkle branch proof should be returned as well.
-
 **Result**
 
     If *verbose* is :const:`false`:
 
-       If *merkle* is :const:`false`, the raw transaction as a
-       hexadecimal string.  If :const:`true`, the dictionary returned
-       by :func:`blockchain.transaction.get_merkle` with an additional
-       key:
-
-       *hex*
-
-          The raw transaction as a hexadecimal string.
+       The raw transaction as a hexadecimal string.
 
     If *verbose* is :const:`true`:
 
        The result is a coin-specific dictionary -- whatever the coin
        daemon returns when asked for a verbose form of the raw
-       transaction.  If *merkle* is :const:`true` it will have an
-       additional key:
-
-       *merkle*
-
-          The dictionary returned by
-          :func:`blockchain.transaction.get_merkle`.
+       transaction.
 
 **Example Results**
 
-When *verbose* is :const:`false` and *merkle* is :const:`false`::
+When *verbose* is :const:`false`::
 
   "01000000015bb9142c960a838329694d3fe9ba08c2a6421c5158d8f7044cb7c48006c1b48"
   "4000000006a4730440220229ea5359a63c2b83a713fcc20d8c41b20d48fe639a639d2a824"
@@ -736,7 +579,7 @@ When *verbose* is :const:`false` and *merkle* is :const:`false`::
   "4fe5f88ac50a8cf00000000001976a91445dac110239a7a3814535c15858b939211f85298"
   "88ac61ee0700"
 
-When *verbose* is :const:`true` and *merkle* is :const:`false`::
+When *verbose* is :const:`true`::
 
  {
    "blockhash": "0000000000000000015a4f37ece911e5e3549f988e855548ce7494a0a08b2ad6",
@@ -895,52 +738,6 @@ When *merkle* is :const:`true`::
       "503d3349648b985c1b571f59059e4da55a57b0163b08cc50379d73be80c4c8f3"
     ]
   }
-
-mempool.changes
-===============
-
-A notification that indicates changes to unconfirmed transactions of a
-:ref:`subscribed <subscribed>` :ref:`script hash <script hashes>`.  As
-its name suggests the notification is stateful; its contents are a
-function of what was sent previously.
-
-**Signature**
-
-  .. function:: mempool.changes(scripthash, new, gone)
-  .. versionadded:: 1.5
-
-  The parameters are as follows:
-
-  * *scripthash*
-
-    The script hash the notification is for, a hexadecimal string.
-
-  * *new*
-
-    A list of transactions in the mempool that have not previously
-    been sent to the client, or whose *confirmed input* status
-    has changed.  Each transaction is an ordered list of 3 items:
-
-    1. The raw transaction or its hash as a hexadecimal string.  The
-       first time the server sends a transaction it sends it raw.
-       Subsequent references in the same *new* list or in later
-       notifications will send the hash only.  Transactions cannot be
-       32 bytes in size so length can be used to distinguish.
-    2. The transaction fee, an integer in minimum coin units (satoshis)
-    3. :const:`true` if all inputs are confirmed otherwise :const:`false`
-
-  * *gone*
-
-    A list of hashes of transactions that were previously sent to the
-    client as being in the mempool but no longer are.  Those
-    transactions presumably were confirmed in a block or were evicted
-    from the mempool.
-
-**Notification Example**
-
-::
-  **TODO**
-
 
 mempool.get_fee_histogram
 =========================
@@ -1169,17 +966,11 @@ server.version
 ==============
 
 Identify the client to the server and negotiate the protocol version.
+Only the first :func:`server.version` message is accepted.
 
 **Signature**
 
-  .. function:: server.version(client_name="", protocol_version="1.1")
-  .. versionchanged:: 1.1
-     *protocol_version* is not ignored.
-  .. versionchanged:: 1.2
-     Use :func:`server.ping` rather than sending version requests as a
-     ping mechanism.
-  .. versionchanged:: 1.4
-     Only the first :func:`server.version` message is accepted.
+  .. function:: server.version(client_name="", protocol_version="1.4")
 
   * *client_name*
 
@@ -1213,17 +1004,13 @@ Identify the client to the server and negotiate the protocol version.
   identifying the server and the protocol version that will be used
   for future communication.
 
-  *Protocol version 1.0*: A string identifying the server software.
-
-**Examples**::
+**Example**::
 
   server.version("Electrum 3.0.6", ["1.1", "1.2"])
-  server.version("2.7.1", "1.0")
 
-**Example Results**::
+**Example Result**::
 
   ["ElectrumX 1.2.1", "1.2"]
-  "ElectrumX 1.2.1"
 
 
 Masternode methods (Dash and compatible coins)
@@ -1354,3 +1141,107 @@ Returns the list of masternodes.
       ...,
       ...
     ]
+
+
+ProTx methods (Dash DIP3)
+==============================================
+
+
+protx.diff
+=============================
+
+Returns a diff between two deterministic masternode lists.
+The result also contains proof data.
+
+**Signature**
+
+  .. function:: protx.diff(base_height, height)
+
+  *base_height*
+
+    The starting block height
+
+      *1* <= *base_height*
+
+  *height*
+
+    The ending block height.
+
+      *base_height* <= *height*
+
+
+**Result**
+
+  A dictionary with deterministic masternode lists diff plus proof data
+
+**Example**::
+
+  protx.diff(1, 20000)
+
+**Example Result**::
+
+    {
+      "baseBlockHash": "000000000b866e7fefc7df2b4b37f236175cee9ab6dc925a30c62401d92b7406",
+      "blockHash": "0000000005b3f97e0af8c72f9a96eca720237e374ca860938ba0d7a68471c4d6",
+      "cbTxMerkleTree": "0200000002c9802d02435cfe09e4253bc1ba4875e9a2f920d5d6adf005d5b9306e5322e6f476d885273422c2fe18e8c420d09484f89eaeee7bb7f4e1ff54bddeb94e099a910103",
+      "cbTx": "03000500010000000000000000000000000000000000000000000000000000000000000000ffffffff4b02204e047867335c08fabe6d6d8b2b76b7000000000470393f63424273736170747365743a7265737574736574010000000000000010000015770000000d2f6e6f64655374726174756d2f000000000336c8a119010000001976a914cb594917ad4e5849688ec63f29a0f7f3badb5da688ac6c62c216010000001976a914a3c5284d3cd896815ac815f2dd76a3a71cb3d8e688acba65df02000000001976a9146d649e1c05e89d30809ef39cc8ee1002c0c8c84b88ac00000000260100204e0000b301c3d88e4072305bec5d09e2ed6b836b23af640bcdefd7b8ae7e2ca182dc17",
+      "deletedMNs": [
+      ],
+      "mnList": [
+        {
+          "proRegTxHash": "6f0bdd7034ce8d3a6976a15e4b4442c274b5c1739fb63fc0a50f01425580e17e",
+          "confirmedHash": "000000000be653cd1fbc213239cfec83ca68da657f24cc05305d0be75d34e392",
+          "service": "173.61.30.231:19023",
+          "pubKeyOperator": "8da7ee1a40750868badef2c17d5385480cae7543f8d4d6e5f3c85b37fdd00a6b4f47726b96e7e7c7a3ea68b5d5cb2196",
+          "keyIDVoting": "b35c75cbc69433175d3459843e1f6ebe145bf6a3",
+          "isValid": true
+        }
+      ],
+      "merkleRootMNList": "17dc82a12c7eaeb8d7efcd0b64af236b836bede2095dec5b3072408ed8c301b3"
+    }
+
+protx.info
+=============================
+
+Returns detailed information about a deterministic masternode.
+
+**Signature**
+
+  .. function:: protx.info(protx_hash)
+
+  *protx_hash*
+
+    The hash of the initial ProRegTx.
+
+**Result**
+
+  A dictionary with detailed deterministic masternode data
+
+**Example**::
+
+  protx.info("6f0bdd7034ce8d3a6976a15e4b4442c274b5c1739fb63fc0a50f01425580e17e")
+
+**Example Result**::
+
+  {
+    "proTxHash": "6f0bdd7034ce8d3a6976a15e4b4442c274b5c1739fb63fc0a50f01425580e17e",
+    "collateralHash": "b41439376b6117aebe6ad1ce31dcd217d4934fd00c104029ecb7d21c11d17c94",
+    "collateralIndex": 3,
+    "operatorReward": 0,
+    "state": {
+      "registeredHeight": 19525,
+      "lastPaidHeight": 20436,
+      "PoSePenalty": 0,
+      "PoSeRevivedHeight": -1,
+      "PoSeBanHeight": -1,
+      "revocationReason": 0,
+      "keyIDOwner": "b35c75cbc69433175d3459843e1f6ebe145bf6a3",
+      "pubKeyOperator": "8da7ee1a40750868badef2c17d5385480cae7543f8d4d6e5f3c85b37fdd00a6b4f47726b96e7e7c7a3ea68b5d5cb2196",
+      "keyIDVoting": "b35c75cbc69433175d3459843e1f6ebe145bf6a3",
+      "ownerKeyAddr": "ybGQ7a6e7dkJY2jxdbDwdBtyjKZJ8VB7YC",
+      "votingKeyAddr": "ybGQ7a6e7dkJY2jxdbDwdBtyjKZJ8VB7YC",
+      "addr": "173.61.30.231:19023",
+      "payoutAddress": "yWdXnYxGbouNoo8yMvcbZmZ3Gdp6BpySxL"
+    },
+    "confirmations": 984
+  }

@@ -33,8 +33,9 @@ from ipaddress import ip_address
 import logging
 import re
 import sys
-from collections import Container, Mapping
-from struct import pack, Struct
+from collections.abc import Container, Mapping
+from struct import Struct
+
 
 # Logging utilities
 
@@ -57,7 +58,7 @@ def make_logger(name, *, handler, level):
     '''Return the root ElectrumX logger.'''
     logger = logging.getLogger(name)
     logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
     logger.propagate = False
     return logger
 
@@ -255,22 +256,6 @@ def address_string(address):
             fmt = '[{}]:{:d}'
     return fmt.format(host, port)
 
-# See http://stackoverflow.com/questions/2532053/validate-a-hostname-string
-# Note underscores are valid in domain names, but strictly invalid in host
-# names.  We ignore that distinction.
-
-
-SEGMENT_REGEX = re.compile("(?!-)[A-Z_\\d-]{1,63}(?<!-)$", re.IGNORECASE)
-
-
-def is_valid_hostname(hostname):
-    if len(hostname) > 255:
-        return False
-    # strip exactly one dot from the right, if present
-    if hostname and hostname[-1] == ".":
-        hostname = hostname[:-1]
-    return all(SEGMENT_REGEX.match(x) for x in hostname.split("."))
-
 
 def protocol_tuple(s):
     '''Converts a protocol version number, such as "1.0" to a tuple (1, 0).
@@ -278,7 +263,7 @@ def protocol_tuple(s):
     If the version number is bad, (0, ) indicating version 0 is returned.'''
     try:
         return tuple(int(part) for part in s.split('.'))
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         return (0, )
 
 
