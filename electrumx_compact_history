@@ -58,9 +58,17 @@ async def compact_history():
 
     history.comp_flush_count = max(history.comp_flush_count, 1)
     limit = 8 * 1000 * 1000
-
     while history.comp_cursor != -1:
         history._compact_history(limit)
+
+    eventlog = db.eventlog
+    # Continue where we left off, if interrupted
+    if eventlog.comp_cursor == -1:
+        eventlog.comp_cursor = 0
+    eventlog.comp_flush_count = max(eventlog.comp_flush_count, 1)
+    limit = 8 * 1000 * 1000
+    while eventlog.comp_cursor != -1:
+        eventlog._compact_history(limit)
 
     # When completed also update the UTXO flush count
     db.set_flush_count(history.flush_count)
