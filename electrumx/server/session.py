@@ -130,7 +130,6 @@ class SessionManager:
         self._history_cache = pylru.lrucache(1000)
         self._history_lookups = 0
         self._history_hits = 0
-        # todo codeface
         self._eventlog_cache = pylru.lrucache(1000)
         self._tx_hashes_cache = pylru.lrucache(1000)
         self._tx_hashes_lookups = 0
@@ -731,24 +730,7 @@ class SessionManager:
             raise result
         return result, cost
 
-    # async def _notify_sessions(self, height, touched, eventlog_touched=None):
-    #     '''Notify sessions about height changes and touched addresses.'''
-    #     height_changed = height != self.notified_height
-    #     if height_changed:
-    #         await self._refresh_hsub_results(height)
-    #         # Invalidate our history cache for touched hashXs
-    #         hc = self.history_cache
-    #         for hashX in set(hc).intersection(touched):
-    #             del hc[hashX]
-    #         ec = self.eventlog_cache
-    #         if eventlog_touched is not None:
-    #             for hashY in set(ec).intersection(eventlog_touched):
-    #                 del ec[hashY]
-    #
-    #     for session in self.sessions:
-    #         await session.spawn(session.notify, touched, eventlog_touched, height_changed)
-
-    async def _notify_sessions(self, height, touched):
+    async def _notify_sessions(self, height, touched, eventlog_touched=None):
         '''Notify sessions about height changes and touched addresses.'''
         # Invalidate our height-based caches in case of a reorg
         for cache in (self._tx_hashes_cache, self._merkle_cache):
@@ -763,9 +745,13 @@ class SessionManager:
             cache = self._history_cache
             for hashX in set(cache).intersection(touched):
                 del cache[hashX]
+            ec = self._eventlog_cache
+            if eventlog_touched is not None:
+                for hashY in set(ec).intersection(eventlog_touched):
+                    del ec[hashY]
 
         for session in self.sessions:
-            await self._task_group.spawn(session.notify, touched, height_changed)
+            await self._task_group.spawn(session.notify, touched, eventlog_touched, height_changed)
 
     def _ip_addr_group_name(self, session):
         host = session.remote_address().host
