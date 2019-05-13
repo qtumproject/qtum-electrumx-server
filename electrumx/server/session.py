@@ -704,6 +704,12 @@ class SessionManager:
             raise RPCError(BAD_REQUEST, f'height {height:,d} '
                            'out of range') from None
 
+    async def electrum_header(self, height):
+        '''Return the deserialized header at the given height.'''
+        raw_header = await self.raw_header(height)
+        electrum_header = self.env.coin.electrum_header(raw_header, height)
+        return electrum_header
+
     async def broadcast_transaction(self, raw_tx):
         hex_hash = await self.daemon.broadcast_transaction(raw_tx)
         self.txs_sent += 1
@@ -1022,7 +1028,7 @@ class ElectrumX(SessionBase):
         '''The result of a header subscription or notification.'''
         return self.session_mgr.hsub_results
 
-    async def headers_subscribe(self):
+    async def headers_subscribe(self, raw=False):
         '''Subscribe to get raw headers of new blocks.'''
         self.subscribe_headers = True
         self.bump_cost(0.25)
@@ -1186,6 +1192,16 @@ class ElectrumX(SessionBase):
         result.update(await self._merkle_proof(cp_height, height))
         return result
 
+    async def block_get_header(self, height):
+        '''The deserialized header at a given height.
+
+        height: the header's height'''
+        height = non_negative_integer(height)
+        return await self.session_mgr.electrum_header(height)
+
+    async def block_headers_12(self, start_height, count):
+        return await self.block_headers(start_height, count)
+
     async def block_header_13(self, height):
         '''Return a raw block header as a hexadecimal string.
 
@@ -1215,9 +1231,6 @@ class ElectrumX(SessionBase):
         self.bump_cost(cost)
         return result
 
-    async def block_headers_12(self, start_height, count):
-        return await self.block_headers(start_height, count)
-
     async def block_get_chunk(self, index):
         '''Return a chunk of block headers as a hexadecimal string.
 
@@ -1227,13 +1240,6 @@ class ElectrumX(SessionBase):
         start_height = index * size
         headers, _ = await self.db.read_headers(start_height, size)
         return headers.hex()
-
-    async def block_get_header(self, height):
-        '''The deserialized header at a given height.
-
-        height: the header's height'''
-        height = non_negative_integer(height)
-        return await self.session_mgr.electrum_header(height)
 
     def is_tor(self):
         '''Try to detect if the connection is to a tor hidden service we are
@@ -1493,7 +1499,7 @@ class ElectrumX(SessionBase):
     async def contract_event_get_history(self, hash160, contract_addr, topic):
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
         hashY = hashY + topic.encode()
-        eventlogs = await self.session_mgr.limited_eventlog(hashY)
+        eventlogs, _ = await self.session_mgr.limited_eventlog(hashY)
         conf = [{'tx_hash': hash_to_hex_str(tx_hash),
                  'height': height,
                  'log_index': log_index}
@@ -1518,9 +1524,6 @@ class ElectrumX(SessionBase):
         return await self.contract_event_subscribe(hash160, contract_addr,  util.TOKEN_TRANSFER_TOPIC)
 
     async def contract_event_subscribe(self, hash160, contract_addr, topic):
-        if len(self.contract_subs) >= self.max_subs:
-            raise RPCError('your contract subscription limit {:,d} reached'
-                           .format(self.max_subs))
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
         hashY = hashY + topic.encode()
         self.contract_subs[hashY] = (hash160, contract_addr, topic)
@@ -1552,7 +1555,7 @@ class ElectrumX(SessionBase):
             #'server.peers.subscribe': self.peers_subscribe,
             'server.ping': self.ping,
             'server.version': self.server_version,
-            'blockchain.headers.subscribe': self.headers_subscribe_False,
+            'blockchain.headers.subscribe': self.headers_subscribe,
             'blockchain.contract.call': self.contract_call,
             'blochchain.transaction.get_receipt': self.transaction_get_receipt,
             'blockchain.token.get_info': self.token_get_info,
@@ -1568,19 +1571,11 @@ class ElectrumX(SessionBase):
                 'blockchain.contract.event.subscribe': self.contract_event_subscribe,
                 'blockchain.contract.event.get_history': self.contract_event_get_history,
             })
-        elif ptuple >= (1, 3):
+        else:
             handlers.update({
                 'blockchain.block.header': self.block_header_13,
                 'blockchain.hash160.contract.get_eventlogs': self.contract_event_get_history_1_3,
                 'blockchain.hash160.contract.subscribe': self.contract_event_subscribe_1_3,
-            })
-        else:
-            handlers.update({
-                'blockchain.address.get_balance': self.address_get_balance,
-                'blockchain.address.get_history': self.address_get_history,
-                'blockchain.address.get_mempool': self.address_get_mempool,
-                'blockchain.address.listunspent': self.address_listunspent,
-                'blockchain.address.subscribe': self.address_subscribe,
             })
 
         self.request_handlers = handlers
