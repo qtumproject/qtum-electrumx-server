@@ -131,6 +131,8 @@ class SessionManager:
         self._history_lookups = 0
         self._history_hits = 0
         self._eventlog_cache = pylru.lrucache(1000)
+        self._eventlog_lookups = 0
+        self._evenlog_hits = 0
         self._tx_hashes_cache = pylru.lrucache(1000)
         self._tx_hashes_lookups = 0
         self._tx_hashes_hits = 0
@@ -792,15 +794,22 @@ class SessionManager:
 
     async def limited_eventlog(self, hashY):
         '''A caching layer.'''
-        ec = self._eventlog_cache
-        if hashY not in ec:
-            # History DoS limit.  Each element of history is about 99
-            # bytes when encoded as JSON.  This limits resource usage
-            # on bloated history requests, and uses a smaller divisor
-            # so large requests are logged before refusing them.
-            limit = self.env.max_send // 97
-            ec[hashY] = await self.db.limited_eventlog(hashY, limit=limit)
-        return ec[hashY]
+        limit = self.env.max_send // 97
+        cost = 0.1
+        self._eventlog_lookups += 1
+        try:
+            result = self._eventlog_cache[hashY]
+            self._evenlog_hits += 1
+        except KeyError:
+            result = await self.db.limited_eventlog(hashY, limit=limit)
+            cost += 0.1 + len(result) * 0.001
+            if len(result) >= limit:
+                result = RPCError(BAD_REQUEST, f'eventlog too large', cost=cost)
+            self._eventlog_cache[hashY] = result
+
+        if isinstance(result, Exception):
+            raise result
+        return result, cost
 
 
 class SessionBase(RPCSession):
