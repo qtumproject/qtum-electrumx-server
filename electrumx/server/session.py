@@ -907,7 +907,7 @@ class SessionBase(RPCSession):
 class ElectrumX(SessionBase):
     '''A TCP server that handles incoming Electrum connections.'''
 
-    PROTOCOL_MIN = (1, 2)
+    PROTOCOL_MIN = (1, 4)
     PROTOCOL_MAX = (1, 5)
 
     def __init__(self, *args, **kwargs):
@@ -1493,9 +1493,6 @@ class ElectrumX(SessionBase):
             'symbol': util.parse_call_output(symbol, 'str')
         }
 
-    async def contract_event_get_history_1_3(self, hash160, contract_addr):
-        return await self.contract_event_get_history(hash160, contract_addr, util.TOKEN_TRANSFER_TOPIC)
-
     async def contract_event_get_history(self, hash160, contract_addr, topic):
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
         hashY = hashY + topic.encode()
@@ -1520,9 +1517,6 @@ class ElectrumX(SessionBase):
             status = None
         return status
 
-    async def contract_event_subscribe_1_3(self, hash160, contract_addr):
-        return await self.contract_event_subscribe(hash160, contract_addr,  util.TOKEN_TRANSFER_TOPIC)
-
     async def contract_event_subscribe(self, hash160, contract_addr, topic):
         hashY = self.coin.hash160_contract_to_hashY(hash160, contract_addr)
         hashY = hashY + topic.encode()
@@ -1533,9 +1527,10 @@ class ElectrumX(SessionBase):
         self.protocol_tuple = ptuple
 
         handlers = {
-            'blockchain.block.get_chunk': self.block_get_chunk,
-            'blockchain.block.get_header': self.block_get_header,
-            'blockchain.block.headers': self.block_headers_12,
+            'blockchain.block.get_chunk': self.block_get_chunk,  # 1.5
+            'blockchain.block.get_header': self.block_get_header,  # 1.5
+            'blockchain.block.header': self.block_header,
+            'blockchain.block.headers': self.block_headers,
             'blockchain.estimatefee': self.estimatefee,
             'blockchain.relayfee': self.relayfee,
             'blockchain.scripthash.get_balance': self.scripthash_get_balance,
@@ -1557,26 +1552,11 @@ class ElectrumX(SessionBase):
             'server.version': self.server_version,
             'blockchain.headers.subscribe': self.headers_subscribe,
             'blockchain.contract.call': self.contract_call,
+            'blockchain.contract.event.subscribe': self.contract_event_subscribe,
+            'blockchain.contract.event.get_history': self.contract_event_get_history,
             'blochchain.transaction.get_receipt': self.transaction_get_receipt,
             'blockchain.token.get_info': self.token_get_info,
         }
-
-        if ptuple >= (1, 4):
-            handlers.update({
-                'blockchain.block.header': self.block_header,
-                'blockchain.block.headers': self.block_headers,
-
-                'blockchain.transaction.id_from_pos':
-                    self.transaction_id_from_pos,
-                'blockchain.contract.event.subscribe': self.contract_event_subscribe,
-                'blockchain.contract.event.get_history': self.contract_event_get_history,
-            })
-        else:
-            handlers.update({
-                'blockchain.block.header': self.block_header_13,
-                'blockchain.hash160.contract.get_eventlogs': self.contract_event_get_history_1_3,
-                'blockchain.hash160.contract.subscribe': self.contract_event_subscribe_1_3,
-            })
 
         self.request_handlers = handlers
 
