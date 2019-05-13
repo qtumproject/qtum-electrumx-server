@@ -28,11 +28,13 @@
 '''Transaction-related classes and functions.'''
 
 from collections import namedtuple
+from hashlib import blake2s
 
 from electrumx.lib.hash import sha256, double_sha256, hash_to_hex_str
 from electrumx.lib.script import OpCodes
 from electrumx.lib.util import (
     unpack_le_int32_from, unpack_le_int64_from, unpack_le_uint16_from,
+    unpack_be_uint16_from,
     unpack_le_uint32_from, unpack_le_uint64_from, pack_le_int32, pack_varint,
     pack_le_uint32, pack_le_int64, pack_varbytes,
 )
@@ -193,6 +195,11 @@ class Deserializer(object):
         self.cursor += 2
         return result
 
+    def _read_be_uint16(self):
+        result, = unpack_be_uint16_from(self.binary, self.cursor)
+        self.cursor += 2
+        return result
+
     def _read_le_uint32(self):
         result, = unpack_le_uint32_from(self.binary, self.cursor)
         self.cursor += 4
@@ -257,18 +264,18 @@ class DeserializerSegWit(Deserializer):
         return self._read_tx_parts()[0]
 
     def read_tx_and_hash(self):
-        tx, tx_hash, vsize = self._read_tx_parts()
+        tx, tx_hash, _vsize = self._read_tx_parts()
         return tx, tx_hash
 
     def read_tx_and_vsize(self):
-        tx, tx_hash, vsize = self._read_tx_parts()
+        tx, _tx_hash, vsize = self._read_tx_parts()
         return tx, vsize
 
 
 class DeserializerAuxPow(Deserializer):
     VERSION_AUXPOW = (1 << 8)
 
-    def read_header(self, height, static_header_size):
+    def read_header(self, static_header_size):
         '''Return the AuxPow block header bytes'''
         start = self.cursor
         version = self._read_le_uint32()
@@ -297,7 +304,7 @@ class DeserializerAuxPowSegWit(DeserializerSegWit, DeserializerAuxPow):
 
 
 class DeserializerEquihash(Deserializer):
-    def read_header(self, height, static_header_size):
+    def read_header(self, static_header_size):
         '''Return the block header bytes'''
         start = self.cursor
         # We are going to calculate the block size then read it as bytes
@@ -405,7 +412,7 @@ class DeserializerTxTimeAuxPow(DeserializerTxTime):
             return True
         return False
 
-    def read_header(self, height, static_header_size):
+    def read_header(self, static_header_size):
         '''Return the AuxPow block header bytes'''
         start = self.cursor
         version = self._read_le_uint32()
@@ -551,11 +558,11 @@ class DeserializerDecred(Deserializer):
         return self._read_tx_parts(produce_hash=False)[0]
 
     def read_tx_and_hash(self):
-        tx, tx_hash, vsize = self._read_tx_parts()
+        tx, tx_hash, _vsize = self._read_tx_parts()
         return tx, tx_hash
 
     def read_tx_and_vsize(self):
-        tx, tx_hash, vsize = self._read_tx_parts(produce_hash=False)
+        tx, _tx_hash, vsize = self._read_tx_parts(produce_hash=False)
         return tx, vsize
 
     def read_tx_block(self):

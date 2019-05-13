@@ -14,15 +14,14 @@ import json
 import time
 from calendar import timegm
 from struct import pack
-from time import strptime
 
 import aiohttp
+from aiorpcx import JSONRPC
 
 from electrumx.lib.util import hex_to_bytes, class_logger,\
     unpack_le_uint16_from, pack_varint
 from electrumx.lib.hash import hex_str_to_hash, hash_to_hex_str
 from electrumx.lib.tx import DeserializerDecred
-from aiorpcx import JSONRPC
 
 
 class DaemonError(Exception):
@@ -43,10 +42,11 @@ class Daemon(object):
     WARMING_UP = -28
     id_counter = itertools.count()
 
-    def __init__(self, coin, url, max_workqueue=10, init_retry=0.25,
-                 max_retry=4.0):
+    def __init__(self, coin, url, max_workqueue=10, init_retry=0.25, max_retry=4.0):
         self.coin = coin
         self.logger = class_logger(__name__, self.__class__.__name__)
+        self.url_index = None
+        self.urls = []
         self.set_url(url)
         # Limit concurrent RPC calls to this number.
         # See DEFAULT_HTTP_WORKQUEUE in bitcoind, which is typically 16
@@ -136,6 +136,9 @@ class Daemon(object):
                 log_error('timeout error.')
             except aiohttp.ServerDisconnectedError:
                 log_error('disconnected.')
+                on_good_message = 'connection restored'
+            except ConnectionResetError:
+                log_error('connection reset')
                 on_good_message = 'connection restored'
             except aiohttp.ClientConnectionError:
                 log_error('connection problem - is your daemon running?')
@@ -288,6 +291,10 @@ class DashDaemon(Daemon):
         '''Return the masternode status.'''
         return await self._send_single('masternodelist', params)
 
+    async def protx(self, params):
+        '''Set of commands to execute ProTx related actions.'''
+        return await self._send_single('protx', params)
+
 
 class FakeEstimateFeeDaemon(Daemon):
     '''Daemon that simulates estimatefee and relayfee RPC calls. Coin that
@@ -360,7 +367,7 @@ class LegacyRPCDaemon(Daemon):
     def timestamp_safe(self, t):
         if isinstance(t, int):
             return t
-        return timegm(strptime(t, "%Y-%m-%d %H:%M:%S %Z"))
+        return timegm(time.strptime(t, "%Y-%m-%d %H:%M:%S %Z"))
 
 
 class DecredDaemon(Daemon):

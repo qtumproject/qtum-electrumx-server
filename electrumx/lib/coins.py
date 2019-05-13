@@ -36,13 +36,13 @@ import struct
 from decimal import Decimal
 from hashlib import sha256
 from functools import partial
-import base64
 
 import electrumx.lib.util as util
 from electrumx.lib.hash import Base58, hash160, double_sha256, hash_to_hex_str
 from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash
 from electrumx.lib.script import ScriptPubKey, OpCodes
 import electrumx.lib.tx as lib_tx
+import electrumx.lib.tx_dash as lib_tx_dash
 import electrumx.server.block_processor as block_proc
 import electrumx.server.daemon as daemon
 from electrumx.server.session import ElectrumX
@@ -67,6 +67,7 @@ class Coin(object):
     BASIC_HEADER_SIZE = 80
     STATIC_BLOCK_HEADERS = True
     SESSIONCLS = ElectrumX
+    DEFAULT_MAX_SEND = 1000000
     DESERIALIZER = lib_tx.Deserializer
     DAEMON = daemon.Daemon
     BLOCK_PROCESSOR = block_proc.BlockProcessor
@@ -74,13 +75,20 @@ class Coin(object):
                      'bits', 'nonce')
     HEADER_UNPACK = struct.Struct('< I 32s 32s I I I').unpack_from
     MEMPOOL_HISTOGRAM_REFRESH_SECS = 500
+    P2PKH_VERBYTE = bytes.fromhex("00")
+    P2SH_VERBYTES = [bytes.fromhex("05")]
     XPUB_VERBYTES = bytes('????', 'utf-8')
     XPRV_VERBYTES = bytes('????', 'utf-8')
+    WIF_BYTE = bytes.fromhex("80")
     ENCODE_CHECK = Base58.encode_check
     DECODE_CHECK = Base58.decode_check
+    GENESIS_HASH = ('000000000019d6689c085ae165831e93'
+                    '4ff763ae46a2a6c172b3f1b60a8ce26f')
     # Peer discovery
     PEER_DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     PEERS = []
+    CRASH_CLIENT_VER = None
+    BLACKLIST_URL = None
 
     @classmethod
     def lookup_coin_class(cls, name, net):
@@ -254,14 +262,8 @@ class Coin(object):
         return Decimal(value) / cls.VALUE_PER_COIN
 
     @classmethod
-    def electrum_header(cls, header, height):
-        h = dict(zip(cls.HEADER_VALUES, cls.HEADER_UNPACK(header)))
-        # Add the height that is not present in the header itself
-        h['block_height'] = height
-        # Convert bytes to str
-        h['prev_block_hash'] = hash_to_hex_str(h['prev_block_hash'])
-        h['merkle_root'] = hash_to_hex_str(h['merkle_root'])
-        return h
+    def warn_old_client_on_tx_broadcast(cls, _client_ver):
+        return False
 
     @classmethod
     def hash160_contract_to_hashY(cls, hash160, contract_addr):
