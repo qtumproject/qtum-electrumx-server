@@ -1,5 +1,6 @@
-aiorpcX>=0.10.1,<0.11
+aiorpcX>=0.18.0,<0.19
 attrs
 plyvel
 pylru
-aiohttp>=2
+aiohttp>=3.3
+uvloop>=0.12.2
