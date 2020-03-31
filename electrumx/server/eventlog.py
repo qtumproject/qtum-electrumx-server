@@ -23,7 +23,7 @@ class Eventlog(object):
         self.logger = util.class_logger(__name__, self.__class__.__name__)
         # For history compaction
         self.max_hist_row_entries = 12500
-        self.unflushed = defaultdict(list)  # {b'hashY_topic' => [array('I', [txnum, log_index]),]}
+        self.unflushed = defaultdict(list)  # {b'hashY_topic' => [array('Q', [txnum, log_index]),]}
         self.unflushed_count = 0
         self.flush_count = 0
         self.comp_flush_count = -1
@@ -107,7 +107,7 @@ class Eventlog(object):
 
     def add_unflushed(self, eventlogs):
         """
-        eventlogs: {b'hashY_topic' => [array('I', [txnum, log_index]),]}
+        eventlogs: {b'hashY_topic' => [array('Q', [txnum, log_index]),]}
         """
         unflushed = self.unflushed
         count = 0
@@ -153,9 +153,9 @@ class Eventlog(object):
                 deletes = []
                 puts = {}
                 for key, hist in self.db.iterator(prefix=addr, reverse=True):
-                    a = array.array('I')
+                    a = array.array('Q')
                     a.frombytes(hist)  # txnum, log_index
-                    tx_nums = array.array('I', [a[2*i] for i in range(len(a)//2)])
+                    tx_nums = array.array('Q', [a[2*i] for i in range(len(a)//2)])
                     # Remove all eventlog entries >= self.tx_count
                     idx = bisect_left(tx_nums, tx_count)
                     nremoves += len(tx_nums) - idx
@@ -175,7 +175,7 @@ class Eventlog(object):
     def get_txnums(self, key, limit=1000):
         limit = util.resolve_limit(limit)
         for key, hist in self.db.iterator(prefix=key):
-            a = array.array('I')
+            a = array.array('Q')
             a.frombytes(hist)
             # 把一维数据恢复成2*2维
             for i in range(len(a)//2):

@@ -2,16 +2,11 @@ sudo: required
 dist: trusty
 language: python
 before_install:
-  - sudo add-apt-repository -y ppa:giskou/librocksdb
+  - sudo add-apt-repository -y ppa:streetcrypto7/rocksdb
+  - sudo add-apt-repository -y ppa:streetcrypto7/leveldb
   - sudo apt-get -qq update
-  - sudo apt-get install -yq libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev
-  - sudo apt-get install -yq --allow-unauthenticated librocksdb
-  - wget https://launchpad.net/ubuntu/+archive/primary/+files/leveldb_1.20.orig.tar.gz
-  - tar -xzvf leveldb_1.20.orig.tar.gz
-  - pushd leveldb-1.20 && make && sudo mv out-shared/libleveldb.* /usr/local/lib && sudo cp -R include/leveldb /usr/local/include && sudo ldconfig && popd
+  - sudo apt-get install -yq libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev librocksdb-dev libleveldb-dev
 python:
-  - "3.6"
-  - "3.6-dev"
   - "3.7-dev"
   - "nightly"
 # command to install dependencies
@@ -22,12 +17,12 @@ install:
   - pip install plyvel
   - pip install pycodestyle
   - pip install pylru
-  - pip install pyrocksdb
+  - pip install python-rocksdb
   - pip install pytest-asyncio
   - pip install pytest-cov
   - pip install Sphinx
 # hashes
-  - pip install tribus-hash
+  - pip install git+https://github.com/carsenk/tribus-hash
   - pip install blake256
   - pip install scrypt
   - pip install x11_hash
@@ -39,6 +34,11 @@ install:
   - pip install x16r_hash
   - pip install pycryptodomex
   - pip install git+https://github.com/Electra-project/nist5_hash
+  - pip install git+https://github.com/RitoProject/x21s_hash
+  - pip install git+https://github.com/traysi/x16rv2_hash
+  - pip install git+https://github.com/VerusCoin/verushashpy
+  - pip install bell-yespower
+  - pip install cpupower
 # command to run tests
 script:
   - pytest --cov=electrumx
@@ -46,7 +46,7 @@ script:
   - sh -c "cd docs && make html"
 # Dont report coverage from nightly
 after_success:
-  - if [[ $(python3 -V 2>&1) == *"Python 3.6"* ]]; then
+  - if [[ $(python3 -V 2>&1) == *"Python 3.7"* ]]; then
       pip install python-coveralls;
       coveralls;
     fi

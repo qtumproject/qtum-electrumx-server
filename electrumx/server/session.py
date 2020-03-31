@@ -7,7 +7,6 @@
 
 '''Classes for local RPC server and remote client TCP/SSL servers.'''
 
-import asyncio
 import codecs
 import datetime
 import itertools
@@ -127,6 +126,7 @@ class SessionManager:
         self.txs_sent = 0
         self.start_time = time.time()
         self._method_counts = defaultdict(int)
+        self._reorg_count = 0
         self._history_cache = pylru.lrucache(1000)
         self._history_lookups = 0
         self._history_hits = 0
@@ -256,6 +256,15 @@ class SessionManager:
             await self._disconnect_sessions(stale_sessions, 'closing stale')
             del stale_sessions
 
+    async def _handle_chain_reorgs(self):
+        '''Clear caches on chain reorgs.'''
+        while True:
+            await self.bp.backed_up_event.wait()
+            self.logger.info(f'reorg signalled; clearing tx_hashes and merkle caches')
+            self._reorg_count += 1
+            self._tx_hashes_cache.clear()
+            self._merkle_cache.clear()
+
     async def _recalc_concurrency(self):
         '''Periodically recalculate session concurrency.'''
         session_class = self.env.coin.SESSIONCLS
@@ -291,6 +300,7 @@ class SessionManager:
             'daemon': self.daemon.logged_url(),
             'daemon height': self.daemon.cached_height(),
             'db height': self.db.db_height,
+            'db_flush_count': self.db.history.flush_count,
             'groups': len(self.session_groups),
             'history cache': cache_fmt.format(
                 self._history_lookups, self._history_hits, len(self._history_cache)),
@@ -493,26 +503,35 @@ class SessionManager:
         return self.peer_mgr.rpc_data()
 
     async def rpc_query(self, items, limit):
-        '''Return a list of data about server peers.'''
+        '''Returns data about a script, address or name.'''
         coin = self.env.coin
         db = self.db
-        lines = []
+        lines = defaultdict(list)
 
         def arg_to_hashX(arg):
             try:
                 script = bytes.fromhex(arg)
-                lines.append(f'Script: {arg}')
+                lines['script'] = arg
                 return coin.hashX_from_script(script)
             except ValueError:
                 pass
 
             try:
                 hashX = coin.address_to_hashX(arg)
-            except Base58Error as e:
-                lines.append(e.args[0])
-                return None
-            lines.append(f'Address: {arg}')
-            return hashX
+                lines['address'] = arg
+                return hashX
+            except Base58Error:
+                pass
+
+            try:
+                script = coin.build_name_index_script(arg.encode("ascii"))
+                hashX = coin.name_hashX_from_script(script)
+                lines['name'] = arg
+                return hashX
+            except (AttributeError, UnicodeEncodeError):
+                pass
+
+            return None
 
         for arg in items:
             hashX = arg_to_hashX(arg)
@@ -521,25 +540,28 @@ class SessionManager:
             n = None
             history = await db.limited_history(hashX, limit=limit)
             for n, (tx_hash, height) in enumerate(history):
-                lines.append(f'History #{n:,d}: height {height:,d} '
-                             f'tx_hash {hash_to_hex_str(tx_hash)}')
+                lines['history'].append({
+                    'height': height,
+                    'tx_hash': hash_to_hex_str(tx_hash)
+                })
             if n is None:
-                lines.append('No history found')
+                lines['history'] = []
             n = None
             utxos = await db.all_utxos(hashX)
             for n, utxo in enumerate(utxos, start=1):
-                lines.append(f'UTXO #{n:,d}: tx_hash '
-                             f'{hash_to_hex_str(utxo.tx_hash)} '
-                             f'tx_pos {utxo.tx_pos:,d} height '
-                             f'{utxo.height:,d} value {utxo.value:,d}')
+                lines['utxos'].append({
+                    'tx_hash': hash_to_hex_str(utxo.tx_hash),
+                    'tx_pos': utxo.tx_pos,
+                    'height': utxo.height,
+                    'value': utxo.value
+                })
                 if n == limit:
                     break
             if n is None:
-                lines.append('No UTXOs found')
+                lines['utxos'] = []
 
             balance = sum(utxo.value for utxo in utxos)
-            lines.append(f'Balance: {coin.decimal_value(balance):,f} '
-                         f'{coin.SHORTNAME}')
+            lines['balance'] = f'{coin.decimal_value(balance):,f} {coin.SHORTNAME}'
 
         return lines
 
@@ -599,6 +621,7 @@ class SessionManager:
             async with self._task_group as group:
                 # await group.spawn(self.peer_mgr.discover_peers())
                 await group.spawn(self._clear_stale_sessions())
+                await group.spawn(self._handle_chain_reorgs())
                 await group.spawn(self._recalc_concurrency())
                 await group.spawn(self._log_sessions())
                 await group.spawn(self._manage_servers())
@@ -676,10 +699,15 @@ class SessionManager:
             self._tx_hashes_hits += 1
             return tx_hashes, 0.1
 
-        try:
-            tx_hashes = await self.db.tx_hashes_at_blockheight(height)
-        except self.db.DBError as e:
-            raise RPCError(BAD_REQUEST, f'db error: {e!r}')
+        # Ensure the tx_hashes are fresh before placing in the cache
+        while True:
+            reorg_count = self._reorg_count
+            try:
+                tx_hashes = await self.db.tx_hashes_at_blockheight(height)
+            except self.db.DBError as e:
+                raise RPCError(BAD_REQUEST, f'db error: {e!r}')
+            if reorg_count == self._reorg_count:
+                break
 
         self._tx_hashes_cache[height] = tx_hashes
 
@@ -740,12 +768,6 @@ class SessionManager:
 
     async def _notify_sessions(self, height, touched, eventlog_touched=None):
         '''Notify sessions about height changes and touched addresses.'''
-        # Invalidate our height-based caches in case of a reorg
-        for cache in (self._tx_hashes_cache, self._merkle_cache):
-            for key in range(height, self.db.db_height + 1):
-                if key in cache:
-                    del cache[key]
-
         height_changed = height != self.notified_height
         if height_changed:
             await self._refresh_hsub_results(height)
