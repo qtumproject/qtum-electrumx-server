@@ -297,6 +297,7 @@ class Qtum(Coin):
     POW_BLOCK_COUNT = 5000
     RPC_PORT = 3889
     CHUNK_SIZE = 1024
+    DEFAULT_MAX_SEND = 9000000
 
     @classmethod
     def block_header(cls, block, height):
