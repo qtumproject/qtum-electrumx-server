@@ -42,12 +42,13 @@ def assert_default(env_var, attr, default):
     assert getattr(e, attr) == 'foo'
 
 
-def assert_integer(env_var, attr, default=''):
+def assert_integer(
+        env_var, attr, default='', *, min_value=5, max_value=2000):
     setup_base_env()
     if default != '':
         e = Env()
         assert getattr(e, attr) == default
-    value = random.randrange(5, 2000)
+    value = random.randrange(min_value, max_value)
     os.environ[env_var] = str(value) + '.1'
     with pytest.raises(Env.Error):
         Env()
@@ -61,10 +62,10 @@ def assert_boolean(env_var, attr, default):
     assert getattr(e, attr) == default
     os.environ[env_var] = 'foo'
     e = Env()
-    assert getattr(e, attr) == True
+    assert getattr(e, attr) is True
     os.environ[env_var] = ''
     e = Env()
-    assert getattr(e, attr) == False
+    assert getattr(e, attr) is False
 
 
 def test_minimal():
@@ -141,6 +142,7 @@ def test_COIN_NET():
     e = Env()
     assert e.coin == lib_coins.TokenPay
 
+
 def test_CACHE_MB():
     assert_integer('CACHE_MB', 'cache_MB', 1200)
 
@@ -157,6 +159,7 @@ def test_SERVICES():
         Service('ws', NetAddress('1.2.3.4', 567)),
         Service('rpc', NetAddress('::1', 700)),
     ]
+
 
 def test_SERVICES_default_rpc():
     # This has a blank entry between commas
@@ -178,7 +181,7 @@ def test_bad_SERVICES():
     setup_base_env()
     os.environ['SERVICES'] = 'tcp:foo.bar:1234'
     with pytest.raises(ServiceError) as err:
-         Env()
+        Env()
     assert 'invalid service string' in str(err.value)
     os.environ['SERVICES'] = 'xxx://foo.com:50001'
     with pytest.raises(ServiceError) as err:
@@ -197,7 +200,7 @@ def test_onion_SERVICES():
 def test_duplicate_SERVICES():
     setup_base_env()
     os.environ['SERVICES'] = 'tcp://foo.bar:1234,ws://foo.bar:1235'
-    e = Env()
+    Env()
     os.environ['SERVICES'] = 'tcp://foo.bar:1234,ws://foo.bar:1234'
     with pytest.raises(ServiceError) as err:
         Env()
@@ -274,7 +277,13 @@ def test_REORG_LIMIT():
 
 
 def test_COST_HARD_LIMIT():
-    assert_integer('COST_HARD_LIMIT', 'cost_hard_limit', 10000)
+    assert_integer(
+        'COST_HARD_LIMIT',
+        'cost_hard_limit',
+        10000,
+        min_value=5000,
+        max_value=20000,
+    )
 
 
 def test_COST_SOFT_LIMIT():
@@ -406,3 +415,17 @@ def test_ban_versions():
 def test_coin_class_provided():
     e = Env(lib_coins.BitcoinSV)
     assert e.coin == lib_coins.BitcoinSV
+
+
+def test_drop_unknown_clients():
+    e = Env()
+    assert e.drop_client_unknown is False
+    os.environ['DROP_CLIENT_UNKNOWN'] = ""
+    e = Env()
+    assert e.drop_client_unknown is False
+    os.environ['DROP_CLIENT_UNKNOWN'] = "1"
+    e = Env()
+    assert e.drop_client_unknown is True
+    os.environ['DROP_CLIENT_UNKNOWN'] = "whatever"
+    e = Env()
+    assert e.drop_client_unknown is True

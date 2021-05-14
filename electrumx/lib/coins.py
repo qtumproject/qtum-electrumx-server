@@ -29,13 +29,13 @@
 Anything coin-specific should go in this file and be subclassed where
 necessary for appropriate handling.
 '''
-
-from collections import namedtuple
 import re
 import struct
+from dataclasses import dataclass
 from decimal import Decimal
-from hashlib import sha256
 from functools import partial
+from hashlib import sha256
+from typing import Sequence, Tuple
 
 import electrumx.lib.util as util
 from electrumx.lib.hash import Base58, hash160, double_sha256, hash_to_hex_str
@@ -43,19 +43,25 @@ from electrumx.lib.hash import HASHX_LEN, HASHY_LEN, hex_str_to_hash
 from electrumx.lib.script import (_match_ops, Script, ScriptError,
                                   ScriptPubKey, OpCodes)
 import electrumx.lib.tx as lib_tx
+from electrumx.lib.tx import Tx
 import electrumx.server.block_processor as block_proc
 import electrumx.server.daemon as daemon
 from electrumx.server.session import ElectrumX
 
 
-Block = namedtuple("Block", "raw header transactions")
+@dataclass
+class Block:
+    __slots__ = "raw", "header", "transactions"
+    raw: bytes
+    header: bytes
+    transactions: Sequence[Tuple[Tx, bytes]]
 
 
 class CoinError(Exception):
     '''Exception raised for coin-related errors.'''
 
 
-class Coin(object):
+class Coin:
     '''Base class of coin hierarchy.'''
 
     REORG_LIMIT = 200
@@ -75,7 +81,7 @@ class Coin(object):
     HEADER_UNPACK = struct.Struct('< I 32s 32s I I I').unpack_from
     MEMPOOL_HISTOGRAM_REFRESH_SECS = 500
     P2PKH_VERBYTE = bytes.fromhex("00")
-    P2SH_VERBYTES = [bytes.fromhex("05")]
+    P2SH_VERBYTES = (bytes.fromhex("05"),)
     XPUB_VERBYTES = bytes('????', 'utf-8')
     XPRV_VERBYTES = bytes('????', 'utf-8')
     WIF_BYTE = bytes.fromhex("80")
@@ -89,25 +95,37 @@ class Coin(object):
     PEERS = []
     CRASH_CLIENT_VER = None
     BLACKLIST_URL = None
+    ESTIMATEFEE_MODES = (None, 'CONSERVATIVE', 'ECONOMICAL')
+
+    RPC_PORT: int
+    NAME: str
+    NET: str
+
+    # only used for initial db sync ETAs:
+    TX_COUNT_HEIGHT: int  # at a given snapshot of the chain,
+    TX_COUNT: int         # there have been this many txs so far,
+    TX_PER_BLOCK: int     # and from that height onwards, we guess this many txs per block
 
     @classmethod
     def lookup_coin_class(cls, name, net):
         '''Return a coin class given name and network.
 
         Raise an exception if unrecognised.'''
-        req_attrs = ['TX_COUNT', 'TX_COUNT_HEIGHT', 'TX_PER_BLOCK']
+        req_attrs = ('TX_COUNT', 'TX_COUNT_HEIGHT', 'TX_PER_BLOCK')
         for coin in util.subclasses(Coin):
             if (coin.NAME.lower() == name.lower() and
                     coin.NET.lower() == net.lower()):
-                coin_req_attrs = req_attrs.copy()
-                missing = [attr for attr in coin_req_attrs
-                           if not hasattr(coin, attr)]
+                missing = [
+                    attr
+                    for attr in req_attrs
+                    if not hasattr(coin, attr)
+                ]
                 if missing:
-                    raise CoinError('coin {} missing {} attributes'
-                                    .format(name, missing))
+                    raise CoinError(
+                        f'coin {name} missing {missing} attributes'
+                    )
                 return coin
-        raise CoinError('unknown coin {} and network {} combination'
-                        .format(name, net))
+        raise CoinError(f'unknown coin {name} and network {net} combination')
 
     @classmethod
     def sanitize_url(cls, url):
@@ -115,11 +133,11 @@ class Coin(object):
         url = url.strip().rstrip('/')
         match = cls.RPC_URL_REGEX.match(url)
         if not match:
-            raise CoinError('invalid daemon URL: "{}"'.format(url))
+            raise CoinError(f'invalid daemon URL: "{url}"')
         if match.groups()[1] is None:
-            url += ':{:d}'.format(cls.RPC_PORT)
-        if not url.startswith('http://') and not url.startswith('https://'):
-            url = 'http://' + url
+            url = f'{url}:{cls.RPC_PORT:d}'
+        if not url.startswith(('http://', 'https://')):
+            url = f'http://{url}'
         return url + '/'
 
     @classmethod
@@ -137,10 +155,10 @@ class Coin(object):
         header = cls.block_header(block, 0)
         header_hex_hash = hash_to_hex_str(cls.header_hash(header))
         if header_hex_hash != cls.GENESIS_HASH:
-            raise CoinError('genesis block has hash {} expected {}'
-                            .format(header_hex_hash, cls.GENESIS_HASH))
+            raise CoinError(f'genesis block has hash {header_hex_hash} '
+                            f'expected {cls.GENESIS_HASH}')
 
-        return header + bytes(1)
+        return header + b'\0'
 
     @classmethod
     def hashX_from_script(cls, script):
@@ -162,23 +180,6 @@ class Coin(object):
     def address_to_hashX(cls, address):
         '''Return a hashX given a coin address.'''
         return cls.hashX_from_script(cls.pay_to_address_script(address))
-
-    @classmethod
-    def P2PKH_address_from_hash160(cls, hash160):
-        '''Return a P2PKH address given a public key.'''
-        assert len(hash160) == 20
-        return cls.ENCODE_CHECK(cls.P2PKH_VERBYTE + hash160)
-
-    @classmethod
-    def P2PKH_address_from_pubkey(cls, pubkey):
-        '''Return a coin address given a public key.'''
-        return cls.P2PKH_address_from_hash160(hash160(pubkey))
-
-    @classmethod
-    def P2SH_address_from_hash160(cls, hash160):
-        '''Return a coin address given a hash160.'''
-        assert len(hash160) == 20
-        return cls.ENCODE_CHECK(cls.P2SH_VERBYTES[0] + hash160)
 
     @classmethod
     def hash160_to_P2PKH_script(cls, hash160):
@@ -207,12 +208,12 @@ class Coin(object):
         if verbyte in cls.P2SH_VERBYTES:
             return ScriptPubKey.P2SH_script(hash160)
 
-        raise CoinError('invalid address: {}'.format(address))
+        raise CoinError(f'invalid address: {address}')
 
     @classmethod
     def privkey_WIF(cls, privkey_bytes, compressed):
         '''Return the private key encoded in Wallet Import Format.'''
-        payload = bytearray(cls.WIF_BYTE) + privkey_bytes
+        payload = bytearray(cls.WIF_BYTE + privkey_bytes)
         if compressed:
             payload.append(0x01)
         return cls.ENCODE_CHECK(payload)
@@ -266,6 +267,13 @@ class Coin(object):
     @classmethod
     def warn_old_client_on_tx_broadcast(cls, _client_ver):
         return False
+
+    @classmethod
+    def bucket_estimatefee_block_target(cls, n: int) -> int:
+        '''For caching purposes, it might be desirable to restrict the
+        set of values that can be queried as an estimatefee block target.
+        '''
+        return n
 
     @classmethod
     def hash160_contract_to_hashY(cls, hash160, contract_addr):

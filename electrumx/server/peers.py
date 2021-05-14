@@ -8,23 +8,30 @@
 '''Peer management.'''
 
 import asyncio
-from ipaddress import IPv4Address, IPv6Address
-import json
 import random
 import socket
 import ssl
 import time
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
+from ipaddress import IPv4Address, IPv6Address
+from typing import TYPE_CHECKING, Type
 
 import aiohttp
-from aiorpcx import (connect_rs, RPCSession, SOCKSProxy, Notification, handler_invocation,
-                     SOCKSError, RPCError, TaskTimeout, TaskGroup, Event,
-                     sleep, ignore_after)
+from aiorpcx import (Event, Notification, RPCError, RPCSession, SOCKSError,
+                     SOCKSProxy, TaskGroup, TaskTimeout, connect_rs,
+                     handler_invocation, ignore_after, sleep)
+from aiorpcx.jsonrpc import CodeMessageError
 
 from electrumx.lib.peer import Peer
-from electrumx.lib.util import class_logger
+from electrumx.lib.util import class_logger, json_deserialize
+
+if TYPE_CHECKING:
+    from electrumx.server.env import Env
+    from electrumx.server.db import DB
+
 
 PEER_GOOD, PEER_STALE, PEER_NEVER, PEER_BAD = range(4)
+STATUS_DESCS = ('good', 'stale', 'never', 'bad')
 STALE_SECS = 3 * 3600
 WAKEUP_SECS = 300
 PEER_ADD_PAUSE = 600
@@ -58,7 +65,7 @@ class PeerManager:
     Attempts to maintain a connection with up to 8 peers.
     Issues a 'peers.subscribe' RPC to them and tells them our data.
     '''
-    def __init__(self, env, db):
+    def __init__(self, env: 'Env', db: 'DB'):
         self.logger = class_logger(__name__, self.__class__.__name__)
         # Initialise the Peer class
         Peer.DEFAULT_PORTS = env.coin.PEER_DEFAULT_PORTS
@@ -143,7 +150,7 @@ class PeerManager:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
                     text = await response.text()
-            return set(entry.lower() for entry in json.loads(text))
+            return {entry.lower() for entry in json_deserialize(text)}
 
         while True:
             try:
@@ -208,6 +215,11 @@ class PeerManager:
                     for match in matches:
                         if match.check_ports(peer):
                             self.logger.info(f'ports changed for {peer}')
+                            # Retry connecting to the peer. First we will try the existing
+                            # ports and then try the new ports. Note that check_ports above
+                            # had a side_effect to temporarily store the new ports.
+                            # If we manage to connect, we will call 'server.features',
+                            # and the ports for this peer will be updated to the return values.
                             match.retry_event.set()
             else:
                 match_set.add(peer)
@@ -281,13 +293,15 @@ class PeerManager:
                 self.logger.error(f'{peer_text} marking bad: ({e})')
                 peer.mark_bad()
                 break
-            except RPCError as e:
+            except CodeMessageError as e:
                 self.logger.error(f'{peer_text} RPC error: {e.message} '
                                   f'({e.code})')
             except (OSError, SOCKSError, ConnectionError, TaskTimeout) as e:
                 self.logger.info(f'{peer_text} {e}')
 
         if is_good:
+            # Monotonic time would be better, but last_good and last_try are
+            # exported to admin RPC client.
             now = time.time()
             elapsed = now - peer.last_try
             self.logger.info(f'{peer_text} verified in {elapsed:.1f}s')
@@ -356,7 +370,11 @@ class PeerManager:
 
         # server.version goes first
         message = 'server.version'
-        result = await session.send_request(message, self.server_version_args)
+        try:
+            result = await session.send_request(message, self.server_version_args)
+        except asyncio.CancelledError:
+            raise BadPeerError('terminated before server.version response')
+
         assert_good(message, result, list)
 
         # Protocol version 1.1 returns a pair with the version first
@@ -380,7 +398,10 @@ class PeerManager:
         if features:
             self.logger.info(f'registering ourself with {peer}')
             # We only care to wait for the response
-            await session.send_request('server.add_peer', [features])
+            try:
+                await session.send_request('server.add_peer', [features])
+            except asyncio.CancelledError:
+                raise BadPeerError('terminated before server.add_peer response')
 
     async def _send_headers_subscribe(self, session):
         message = 'blockchain.headers.subscribe'
@@ -472,7 +493,7 @@ class PeerManager:
 
     async def add_localRPC_peer(self, real_name):
         '''Add a peer passed by the admin over LocalRPC.'''
-        await self._note_peers([Peer.from_real_name(real_name, 'RPC')])
+        await self._note_peers([Peer.from_real_name(real_name, 'RPC')], check_ports=True)
 
     async def on_add_peer(self, features, source_addr):
         '''Add a peer (but only if the peer resolves to the source).'''
@@ -536,8 +557,11 @@ class PeerManager:
 
         # Always report ourselves if valid (even if not public)
         cutoff = time.time() - STALE_SECS
-        peers = set(myself for myself in self.myselves
-                    if myself.last_good > cutoff)
+        peers = {
+            myself
+            for myself in self.myselves
+            if myself.last_good > cutoff
+        }
 
         # Bucket the clearnet peers and select up to two from each
         onion_peers = []
@@ -567,14 +591,13 @@ class PeerManager:
     def rpc_data(self):
         '''Peer data for the peers RPC method.'''
         self._set_peer_statuses()
-        descs = ['good', 'stale', 'never', 'bad']
 
         def peer_data(peer):
             data = peer.serialize()
-            data['status'] = descs[peer.status]
+            data['status'] = STATUS_DESCS[peer.status]
             return data
 
         def peer_key(peer):
-            return (peer.bad, -peer.last_good)
+            return peer.bad, -peer.last_good
 
         return [peer_data(peer) for peer in sorted(self.peers, key=peer_key)]

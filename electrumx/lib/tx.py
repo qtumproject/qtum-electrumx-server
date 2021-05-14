@@ -27,8 +27,9 @@
 
 '''Transaction-related classes and functions.'''
 
-from collections import namedtuple
+from dataclasses import dataclass
 from hashlib import blake2s
+from typing import Sequence
 
 from electrumx.lib.hash import sha256, double_sha256, hash_to_hex_str
 from electrumx.lib.script import OpCodes
@@ -36,15 +37,21 @@ from electrumx.lib.util import (
     unpack_le_int32_from, unpack_le_int64_from, unpack_le_uint16_from,
     unpack_be_uint16_from,
     unpack_le_uint32_from, unpack_le_uint64_from, pack_le_int32, pack_varint,
-    pack_le_uint32, pack_le_int64, pack_varbytes,
+    pack_le_uint16, pack_le_uint32, pack_le_int64, pack_varbytes,
 )
 
 ZERO = bytes(32)
 MINUS_1 = 4294967295
 
 
-class Tx(namedtuple("Tx", "version inputs outputs locktime")):
+@dataclass
+class Tx:
     '''Class representing a transaction.'''
+    __slots__ = 'version', 'inputs', 'outputs', 'locktime'
+    version: int
+    inputs: Sequence['TxInput']
+    outputs: Sequence['TxOutput']
+    locktime: int
 
     def serialize(self):
         return b''.join((
@@ -57,13 +64,20 @@ class Tx(namedtuple("Tx", "version inputs outputs locktime")):
         ))
 
 
-class TxInput(namedtuple("TxInput", "prev_hash prev_idx script sequence")):
+@dataclass
+class TxInput:
     '''Class representing a transaction input.'''
+    __slots__ = 'prev_hash', 'prev_idx', 'script', 'sequence'
+    prev_hash: bytes
+    prev_idx: int
+    script: bytes
+    sequence: int
+
     def __str__(self):
         script = self.script.hex()
         prev_hash = hash_to_hex_str(self.prev_hash)
-        return ("Input({}, {:d}, script={}, sequence={:d})"
-                .format(prev_hash, self.prev_idx, script, self.sequence))
+        return (f"Input({prev_hash}, {self.prev_idx:d}, script={script}, "
+                f"sequence={self.sequence:d})")
 
     def is_generation(self):
         '''Test if an input is generation/coinbase like'''
@@ -78,7 +92,11 @@ class TxInput(namedtuple("TxInput", "prev_hash prev_idx script sequence")):
         ))
 
 
-class TxOutput(namedtuple("TxOutput", "value pk_script")):
+@dataclass
+class TxOutput:
+    __slots__ = 'value', 'pk_script'
+    value: int
+    pk_script: bytes
 
     def serialize(self):
         return b''.join((
@@ -87,7 +105,7 @@ class TxOutput(namedtuple("TxOutput", "value pk_script")):
         ))
 
 
-class Deserializer(object):
+class Deserializer:
     '''Deserializes blocks into transactions.
 
     External entry points are read_tx(), read_tx_and_hash(),
@@ -211,9 +229,18 @@ class Deserializer(object):
         return result
 
 
-class TxSegWit(namedtuple("Tx", "version marker flag inputs outputs "
-                          "witness locktime")):
+@dataclass
+class TxSegWit:
     '''Class representing a SegWit transaction.'''
+    __slots__ = ('version', 'marker', 'flag', 'inputs', 'outputs', 'witness',
+                 'locktime')
+    version: int
+    marker: int
+    flag: int
+    inputs: Sequence
+    outputs: Sequence
+    witness: Sequence
+    locktime: int
 
 
 class DeserializerSegWit(Deserializer):
@@ -233,11 +260,18 @@ class DeserializerSegWit(Deserializer):
         start = self.cursor
         marker = self.binary[self.cursor + 4]
         if marker:
-            tx = super().read_tx()
+            # We could call super().read_tx here but the call stack is
+            # expensive when executed millions of times.
+            tx = Tx(
+                self._read_le_int32(),  # version
+                self._read_inputs(),    # inputs
+                self._read_outputs(),   # outputs
+                self._read_le_uint32()  # locktime
+            )
             tx_hash = self.TX_HASH_FN(self.binary[start:self.cursor])
             return tx, tx_hash, self.binary_length
 
-        # Ugh, this is nasty.
+        # Ugh, this is tasty.
         version = self._read_le_int32()
         orig_ser = self.binary[start:self.cursor]
 
@@ -336,10 +370,6 @@ class DeserializerEquihashSegWit(DeserializerSegWit, DeserializerEquihash):
     pass
 
 
-class TxJoinSplit(namedtuple("Tx", "version inputs outputs locktime")):
-    '''Class representing a JoinSplit transaction.'''
-
-
 class DeserializerZcash(DeserializerEquihash):
     def read_tx(self):
         header = self._read_le_uint32()
@@ -353,7 +383,7 @@ class DeserializerZcash(DeserializerEquihash):
         is_overwinter_v3 = version == 3
         is_sapling_v4 = version == 4
 
-        base_tx = TxJoinSplit(
+        base_tx = Tx(
             version,
             self._read_inputs(),    # inputs
             self._read_outputs(),   # outputs
@@ -387,8 +417,72 @@ class DeserializerZcash(DeserializerEquihash):
         return base_tx
 
 
-class TxTime(namedtuple("Tx", "version time inputs outputs locktime")):
+@dataclass
+class TxPIVX:
+    '''Class representing a PIVX transaction.'''
+    __slots__ = 'version', "txtype", 'inputs', 'outputs', 'locktime'
+    version: int
+    txtype: int
+    inputs: Sequence['TxInput']
+    outputs: Sequence['TxOutput']
+    locktime: int
+
+    def serialize(self):
+        return b''.join((
+            pack_le_uint16(self.version),
+            pack_le_uint16(self.txtype),
+            pack_varint(len(self.inputs)),
+            b''.join(tx_in.serialize() for tx_in in self.inputs),
+            pack_varint(len(self.outputs)),
+            b''.join(tx_out.serialize() for tx_out in self.outputs),
+            pack_le_uint32(self.locktime)
+        ))
+
+
+class DeserializerPIVX(Deserializer):
+    def read_tx(self):
+        header = self._read_le_uint32()
+        tx_type = header >> 16  # DIP2 tx type
+        if tx_type:
+            version = header & 0x0000ffff
+        else:
+            version = header
+
+        if tx_type and version < 3:
+            version = header
+            tx_type = 0
+
+        base_tx = TxPIVX(
+            version,
+            tx_type,
+            self._read_inputs(),  # inputs
+            self._read_outputs(),  # outputs
+            self._read_le_uint32()  # locktime
+        )
+
+        if version >= 3:  # >= sapling
+            self._read_varint()
+            self.cursor += 8  # valueBalance
+            shielded_spend_size = self._read_varint()
+            self.cursor += shielded_spend_size * 384  # vShieldedSpend
+            shielded_output_size = self._read_varint()
+            self.cursor += shielded_output_size * 948  # vShieldedOutput
+            self.cursor += 64  # bindingSig
+            if (tx_type > 0):
+                self.cursor += 2  # extraPayload
+
+        return base_tx
+
+
+@dataclass
+class TxTime:
     '''Class representing transaction that has a time field.'''
+    __slots__ = 'version', 'time', 'inputs', 'outputs', 'locktime'
+    version: int
+    time: int
+    inputs: Sequence
+    outputs: Sequence
+    locktime: int
 
 
 class DeserializerTxTime(Deserializer):
@@ -402,9 +496,19 @@ class DeserializerTxTime(Deserializer):
         )
 
 
-class TxTimeSegWit(namedtuple(
-        "Tx", "version time marker flag inputs outputs witness locktime")):
+@dataclass
+class TxTimeSegWit:
     '''Class representing a SegWit transaction with time.'''
+    __slots__ = ('version', 'time', 'marker', 'flag', 'inputs', 'outputs',
+                 'witness', 'locktime')
+    version: int
+    time: int
+    marker: int
+    flag: int
+    inputs: Sequence
+    outputs: Sequence
+    witness: Sequence
+    locktime: int
 
 
 class DeserializerTxTimeSegWit(DeserializerTxTime):
@@ -537,9 +641,17 @@ class DeserializerTxTimeSegWitNavCoin(DeserializerTxTime):
         return tx, vsize
 
 
-class TxTrezarcoin(
-        namedtuple("Tx", "version time inputs outputs locktime txcomment")):
+@dataclass
+class TxTrezarcoin:
     '''Class representing transaction that has a time and txcomment field.'''
+    __slots__ = ('version', 'time', 'inputs', 'outputs', 'locktime',
+                 'txcomment')
+    version: int
+    time: int
+    inputs: Sequence
+    outputs: Sequence
+    locktime: int
+    txcomment: bytes
 
 
 class DeserializerTrezarcoin(Deserializer):
@@ -568,8 +680,7 @@ class DeserializerTrezarcoin(Deserializer):
         _input112 = data + _full_merkle
         _key = keyTwo + ntime + _nBits + _nonce + keyOne
         # Prepare 112Byte Header
-        blake2s_hash = blake2s(key=_key, digest_size=32)
-        blake2s_hash.update(_input112)
+        blake2s_hash = blake2s(_input112, digest_size=32, key=_key)
         # TrezarFlips - Only for Genesis
         return ''.join(map(str.__add__, blake2s_hash.hexdigest()[-2::-2],
                            blake2s_hash.hexdigest()[-1::-2]))
@@ -585,8 +696,7 @@ class DeserializerTrezarcoin(Deserializer):
         _input112 = data + _full_merkle
         _key = keyTwo + ntime + _nBits + _nonce + keyOne
         # Prepare 112Byte Header
-        blake2s_hash = blake2s(key=_key, digest_size=32)
-        blake2s_hash.update(_input112)
+        blake2s_hash = blake2s(_input112, digest_size=32, key=_key)
         # TrezarFlips
         return blake2s_hash.digest()
 
@@ -601,6 +711,17 @@ class DeserializerReddcoin(Deserializer):
             time = self._read_le_uint32()
         else:
             time = 0
+
+        return TxTime(version, time, inputs, outputs, locktime)
+
+
+class DeserializerVerge(Deserializer):
+    def read_tx(self):
+        version = self._read_le_int32()
+        time = self._read_le_uint32()
+        inputs = self._read_inputs()
+        outputs = self._read_outputs()
+        locktime = self._read_le_uint32()
 
         return TxTime(version, time, inputs, outputs, locktime)
 
@@ -678,15 +799,20 @@ class TxInputTokenPay(TxInput):
         return super(TxInputTokenPay, self).is_generation()
 
 
-class TxInputTokenPayStealth(
-        namedtuple("TxInput", "keyimage ringsize script sequence")):
+@dataclass
+class TxInputTokenPayStealth:
     '''Class representing a TokenPay stealth transaction input.'''
+    __slots__ = 'keyimage', 'ringsize', 'script', 'sequence'
+    keyimage: bytes
+    ringsize: bytes
+    script: bytes
+    sequence: int
 
     def __str__(self):
         script = self.script.hex()
         keyimage = bytes(self.keyimage).hex()
-        return ("Input({}, {:d}, script={}, sequence={:d})"
-                .format(keyimage, self.ringsize[1], script, self.sequence))
+        return (f"Input({keyimage}, {self.ringsize[1]:d}, script={script}, "
+                f"sequence={self.sequence:d})")
 
     def is_generation(self):
         return True
@@ -725,26 +851,44 @@ class DeserializerTokenPay(DeserializerTxTime):
 
 
 # Decred
-class TxInputDcr(namedtuple("TxInput", "prev_hash prev_idx tree sequence")):
+@dataclass
+class TxInputDcr:
     '''Class representing a Decred transaction input.'''
+    __slots__ = 'prev_hash', 'prev_idx', 'tree', 'sequence'
+    prev_hash: bytes
+    prev_idx: int
+    tree: int
+    sequence: int
 
     def __str__(self):
         prev_hash = hash_to_hex_str(self.prev_hash)
-        return ("Input({}, {:d}, tree={}, sequence={:d})"
-                .format(prev_hash, self.prev_idx, self.tree, self.sequence))
+        return (f"Input({prev_hash}, {self.prev_idx:d}, tree={self.tree}, "
+                f"sequence={self.sequence:d})")
 
     def is_generation(self):
         '''Test if an input is generation/coinbase like'''
         return self.prev_idx == MINUS_1 and self.prev_hash == ZERO
 
 
-class TxOutputDcr(namedtuple("TxOutput", "value version pk_script")):
+@dataclass
+class TxOutputDcr:
     '''Class representing a Decred transaction output.'''
+    __slots__ = 'value', 'version', 'pk_script'
+    value: int
+    version: int
+    pk_script: bytes
 
 
-class TxDcr(namedtuple("Tx", "version inputs outputs locktime expiry "
-                             "witness")):
+@dataclass
+class TxDcr:
     '''Class representing a Decred  transaction.'''
+    __slots__ = 'version', 'inputs', 'outputs', 'locktime', 'expiry', 'witness'
+    version: int
+    inputs: Sequence
+    outputs: Sequence
+    locktime: int
+    expiry: int
+    witness: Sequence
 
 
 class DeserializerDecred(Deserializer):

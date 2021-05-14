@@ -16,15 +16,15 @@ def sessions_lines(data):
     for (id_, flags, peer, client, proto, cost, extra_cost, reqs, txs_sent, subs,
          recv_count, recv_size, send_count, send_size, conn_time) in data:
         yield fmt.format(id_, flags, client, proto,
-                         '{:,d}'.format(int(cost)),
-                         '{:,d}'.format(int(extra_cost)),
-                         '{:,d}'.format(reqs),
-                         '{:,d}'.format(txs_sent),
-                         '{:,d}'.format(subs),
-                         '{:,d}'.format(recv_count),
-                         '{:,d}'.format(recv_size // 1024),
-                         '{:,d}'.format(send_count),
-                         '{:,d}'.format(send_size // 1024),
+                         f'{int(cost):,d}',
+                         f'{int(extra_cost):,d}',
+                         f'{reqs:,d}',
+                         f'{txs_sent:,d}',
+                         f'{subs:,d}',
+                         f'{recv_count:,d}',
+                         f'{recv_size // 1024:,d}',
+                         f'{send_count:,d}',
+                         f'{send_size // 1024:,d}',
                          util.formatted_time(conn_time, sep=''), peer)
 
 
@@ -40,16 +40,16 @@ def groups_lines(data):
     for (name, session_count, cost, retained_cost, reqs, txs_sent, subs,
          recv_count, recv_size, send_count, send_size) in data:
         yield fmt.format(name,
-                         '{:,d}'.format(session_count),
-                         '{:,d}'.format(int(cost)),
-                         '{:,d}'.format(int(retained_cost)),
-                         '{:,d}'.format(reqs),
-                         '{:,d}'.format(txs_sent),
-                         '{:,d}'.format(subs),
-                         '{:,d}'.format(recv_count),
-                         '{:,d}'.format(recv_size // 1024),
-                         '{:,d}'.format(send_count),
-                         '{:,d}'.format(send_size // 1024))
+                         f'{session_count:,d}',
+                         f'{int(cost):,d}',
+                         f'{int(retained_cost):,d}',
+                         f'{reqs:,d}',
+                         f'{txs_sent:,d}',
+                         f'{subs:,d}',
+                         f'{recv_count:,d}',
+                         f'{recv_size // 1024:,d}',
+                         f'{send_count:,d}',
+                         f'{send_size // 1024:,d}')
 
 
 def peers_lines(data):
@@ -62,7 +62,7 @@ def peers_lines(data):
         return util.formatted_time(now - t)
 
     now = time.time()
-    fmt = ('{:<30} {:<6} {:>5} {:>5} {:<17} {:>4} '
+    fmt = ('{:<62} {:<6} {:>5} {:>5} {:<17} {:>4} '
            '{:>4} {:>8} {:>11} {:>11} {:>5} {:>20} {:<15}')
     yield fmt.format('Host', 'Status', 'TCP', 'SSL', 'Server', 'Min',
                      'Max', 'Pruning', 'Last Good', 'Last Try',
@@ -71,7 +71,7 @@ def peers_lines(data):
         features = item['features']
         hostname = item['host']
         host = features['hosts'][hostname]
-        yield fmt.format(hostname[:30],
+        yield fmt.format(hostname[:62],
                          item['status'],
                          host.get('tcp_port') or '',
                          host.get('ssl_port') or '',

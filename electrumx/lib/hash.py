@@ -32,9 +32,8 @@ import hmac
 from electrumx.lib.util import bytes_to_int, int_to_bytes, hex_to_bytes
 
 _sha256 = hashlib.sha256
-_sha512 = hashlib.sha512
 _new_hash = hashlib.new
-_new_hmac = hmac.new
+_hmac_digest = hmac.digest
 HASHX_LEN = 11
 HASHY_LEN = 12
 TOPIC_LEN = 8
@@ -44,28 +43,9 @@ def sha256(x):
     return _sha256(x).digest()
 
 
-def ripemd160(x):
-    '''Simple wrapper of hashlib ripemd160.'''
-    h = _new_hash('ripemd160')
-    h.update(x)
-    return h.digest()
-
-
 def double_sha256(x):
     '''SHA-256 of SHA-256, as used extensively in bitcoin.'''
     return sha256(sha256(x))
-
-
-def hmac_sha512(key, msg):
-    '''Use SHA-512 to provide an HMAC.'''
-    return _new_hmac(key, msg, _sha512).digest()
-
-
-def hash160(x):
-    '''RIPEMD-160 of SHA-256.
-
-    Used to make bitcoin addresses from pubkeys.'''
-    return ripemd160(sha256(x))
 
 
 def hash_to_hex_str(x):
@@ -81,11 +61,24 @@ def hex_str_to_hash(x):
     return bytes(reversed(hex_to_bytes(x)))
 
 
+def ripemd160(x):
+    '''Simple wrapper of hashlib ripemd160.'''
+    h = _new_hash('ripemd160')
+    h.update(x)
+    return h.digest()
+
+
+def hash160(x):
+    '''RIPEMD-160 of SHA-256.
+    Used to make bitcoin addresses from pubkeys.'''
+    return ripemd160(sha256(x))
+
+
 class Base58Error(Exception):
     '''Exception used for Base58 errors.'''
 
 
-class Base58(object):
+class Base58:
     '''Class providing base 58 functionality.'''
 
     chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
@@ -96,7 +89,7 @@ class Base58(object):
     def char_value(c):
         val = Base58.cmap.get(c)
         if val is None:
-            raise Base58Error('invalid base 58 character "{}"'.format(c))
+            raise Base58Error(f'invalid base 58 character "{c}"')
         return val
 
     @staticmethod
@@ -149,7 +142,7 @@ class Base58(object):
         be_bytes = Base58.decode(txt)
         result, check = be_bytes[:-4], be_bytes[-4:]
         if check != hash_fn(result)[:4]:
-            raise Base58Error('invalid base 58 checksum for {}'.format(txt))
+            raise Base58Error(f'invalid base 58 checksum for {txt}')
         return result
 
     @staticmethod
