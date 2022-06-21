@@ -6,7 +6,7 @@ from os import environ, urandom
 import pytest
 
 from electrumx.lib.hash import HASHX_LEN
-from electrumx.lib.util import pack_be_uint16, pack_le_uint64
+from electrumx.lib.util import pack_be_uint16, pack_be_uint32, pack_le_uint64
 from electrumx.server.env import Env
 from electrumx.server.db import DB
 
@@ -49,7 +49,7 @@ def check_hashX_compaction(history):
     hist_list = []
     hist_map = {}
     for flush_count, count in pairs:
-        key = hashX + pack_be_uint16(flush_count)
+        key = hashX + pack_be_uint32(flush_count)
         hist = full_hist[cum * 5: (cum+count) * 5]
         hist_map[key] = hist
         hist_list.append(hist)

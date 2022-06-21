@@ -721,14 +721,14 @@ class DB:
 
         last = time.monotonic()
         count = 0
-        for cursor in range(65536):
-            prefix = b'u' + pack_be_uint16(cursor)
+        for cursor in range(4294967296):
+            prefix = b'u' + pack_be_uint32(cursor)
             count += upgrade_u_prefix(prefix)
             now = time.monotonic()
             if now > last + 10:
                 last = now
                 self.logger.info(f'DB 1 of 3: {count:,d} entries updated, '
-                                 f'{cursor * 100 / 65536:.1f}% complete')
+                                 f'{cursor * 100 / 4294967296:.1f}% complete')
         self.logger.info('DB 1 of 3 upgraded successfully')
 
         def upgrade_h_prefix(prefix):
@@ -755,14 +755,14 @@ class DB:
 
         last = time.monotonic()
         count = 0
-        for cursor in range(65536):
-            prefix = b'h' + pack_be_uint16(cursor)
+        for cursor in range(4294967296):
+            prefix = b'h' + pack_be_uint32(cursor)
             count += upgrade_h_prefix(prefix)
             now = time.monotonic()
             if now > last + 10:
                 last = now
                 self.logger.info(f'DB 2 of 3: {count:,d} entries updated, '
-                                 f'{cursor * 100 / 65536:.1f}% complete')
+                                 f'{cursor * 100 / 4294967296:.1f}% complete')
 
         # Upgrade tx_counts file
         size = (self.db_height + 1) * 8
