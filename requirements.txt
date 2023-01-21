@@ -1,4 +1,4 @@
-aiorpcX>=0.18.0,<0.19
+aiorpcX>=0.18.6,<0.19
 attrs
 plyvel
 pylru
