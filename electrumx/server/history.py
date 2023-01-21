@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Type, Optional
 
 import electrumx.lib.util as util
 from electrumx.lib.hash import HASHX_LEN, hash_to_hex_str
-from electrumx.lib.util import (pack_be_uint16, pack_le_uint64,
+from electrumx.lib.util import (pack_be_uint32, unpack_be_uint32_from, pack_be_uint16, pack_le_uint64,
                                 unpack_be_uint16_from, unpack_le_uint64)
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 TXNUM_LEN = 5
-FLUSHID_LEN = 2
+FLUSHID_LEN = 4
 
 
 class History:
@@ -110,7 +110,7 @@ class History:
 
         keys = []
         for key, _hist in self.db.iterator(prefix=b''):
-            flush_id, = unpack_be_uint16_from(key[-FLUSHID_LEN:])
+            flush_id, = unpack_be_uint32_from(key[-FLUSHID_LEN:])
             if flush_id > utxo_flush_count:
                 keys.append(key)
 
@@ -157,7 +157,7 @@ class History:
     def flush(self):
         start_time = time.monotonic()
         self.flush_count += 1
-        flush_id = pack_be_uint16(self.flush_count)
+        flush_id = pack_be_uint32(self.flush_count)
         unflushed = self.unflushed
 
         with self.db.write_batch() as batch:
@@ -246,7 +246,7 @@ class History:
     def _flush_compaction(self, cursor, write_items, keys_to_delete):
         '''Flush a single compaction pass as a batch.'''
         # Update compaction state
-        if cursor == 65536:
+        if cursor == 4294967296:
             self.flush_count = self.comp_flush_count
             self.comp_cursor = -1
             self.comp_flush_count = -1
@@ -286,7 +286,7 @@ class History:
         write_size = 0
         keys_to_delete.update(hist_map)
         for n, chunk in enumerate(util.chunks(full_hist, max_row_size)):
-            key = hashX + pack_be_uint16(n)
+            key = hashX + pack_be_uint32(n)
             if hist_map.get(key) == chunk:
                 keys_to_delete.remove(key)
             else:
@@ -335,10 +335,10 @@ class History:
         write_items = []   # A list of (key, value) pairs
         write_size = 0
 
-        # Loop over 2-byte prefixes
+        # Loop over 4-byte prefixes
         cursor = self.comp_cursor
-        while write_size < limit and cursor < 65536:
-            prefix = pack_be_uint16(cursor)
+        while write_size < limit and cursor < 4294967296:
+            prefix = pack_be_uint32(cursor)
             write_size += self._compact_prefix(prefix, write_items,
                                                keys_to_delete)
             cursor += 1
@@ -350,7 +350,7 @@ class History:
             f'history compaction: wrote {len(write_items):,d} rows '
             f'({write_size / 1000000:.1f} MB), removed '
             f'{len(keys_to_delete):,d} rows, largest: {max_rows:,d}, '
-            f'{100 * cursor / 65536:.1f}% complete'
+            f'{100 * cursor / 4294967296:.1f}% complete'
         )
         return write_size
 
@@ -370,8 +370,8 @@ class History:
 
         def upgrade_cursor(cursor):
             count = 0
-            prefix = pack_be_uint16(cursor)
-            key_len = HASHX_LEN + 2
+            prefix = pack_be_uint32(cursor)
+            key_len = HASHX_LEN + 4
             chunks = util.chunks
             with self.db.write_batch() as batch:
                 batch_put = batch.put
@@ -389,7 +389,7 @@ class History:
         last = time.monotonic()
         count = 0
 
-        for cursor in range(self.upgrade_cursor + 1, 65536):
+        for cursor in range(self.upgrade_cursor + 1, 4294967296):
             count += upgrade_cursor(cursor)
             now = time.monotonic()
             if now > last + 10:

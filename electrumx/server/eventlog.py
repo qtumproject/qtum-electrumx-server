@@ -11,7 +11,7 @@ from functools import partial
 from struct import pack, unpack
 
 import electrumx.lib.util as util
-from electrumx.lib.util import pack_be_uint16, unpack_be_uint16_from
+from electrumx.lib.util import pack_be_uint32, pack_be_uint16, unpack_be_uint16_from
 from electrumx.lib.hash import hash_to_hex_str, HASHY_LEN, TOPIC_LEN
 
 
@@ -89,7 +89,7 @@ class Eventlog(object):
                          'excess eventlog flushes...')
         keys = []
         for key, hist in self.db.iterator(prefix=b''):
-            flush_id, = unpack('>H', key[-2:])
+            flush_id, = unpack('>I', key[-4:])
             if flush_id > utxo_flush_count:
                 keys.append(key)
 
@@ -124,7 +124,7 @@ class Eventlog(object):
     def flush(self):
         start_time = time.time()
         self.flush_count += 1
-        flush_id = pack_be_uint16(self.flush_count)
+        flush_id = pack_be_uint32(self.flush_count)
         unflushed = self.unflushed
         with self.db.write_batch() as batch:
             for hashY_topic in sorted(unflushed):
@@ -188,7 +188,7 @@ class Eventlog(object):
     def _flush_compaction(self, cursor, write_items, keys_to_delete):
         '''Flush a single compaction pass as a batch.'''
         # Update compaction state
-        if cursor == 65536:
+        if cursor == 4294967296:
             self.flush_count = self.comp_flush_count
             self.comp_cursor = -1
             self.comp_flush_count = -1
@@ -228,7 +228,7 @@ class Eventlog(object):
         write_size = 0
         keys_to_delete.update(hist_map)
         for n, chunk in enumerate(util.chunks(full_hist, max_row_size)):
-            key = hashY_topic + pack_be_uint16(n)
+            key = hashY_topic + pack_be_uint32(n)
             if hist_map.get(key) == chunk:
                 keys_to_delete.remove(key)
             else:
@@ -247,7 +247,7 @@ class Eventlog(object):
         hist_map = {}
         hist_list = []
 
-        key_len = HASHY_LEN + TOPIC_LEN + 2
+        key_len = HASHY_LEN + TOPIC_LEN + 4
         write_size = 0
         for key, hist in self.db.iterator(prefix=prefix):
             # Ignore non-history entries
@@ -280,8 +280,8 @@ class Eventlog(object):
 
         # Loop over 2-byte prefixes
         cursor = self.comp_cursor
-        while write_size < limit and cursor < 65536:
-            prefix = pack_be_uint16(cursor)
+        while write_size < limit and cursor < 4294967296:
+            prefix = pack_be_uint32(cursor)
             write_size += self._compact_prefix(prefix, write_items,
                                                keys_to_delete)
             cursor += 1
@@ -293,7 +293,7 @@ class Eventlog(object):
                          'removed {:,d} rows, largest: {:,d}, {:.1f}% complete'
                          .format(len(write_items), write_size / 1000000,
                                  len(keys_to_delete), max_rows,
-                                 100 * cursor / 65536))
+                                 100 * cursor / 4294967296))
         return write_size
 
     def _cancel_compaction(self):
